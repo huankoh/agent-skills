@@ -137,9 +137,10 @@ Every test must be able to fail for a plausible real bug a user or caller would 
 Tests call the code the way its callers do and check what those callers see.
 A refactor that keeps behavior the same keeps every test passing.
 
-### Take expected values from an independent source
+### No tautological tests
 
-Use a literal worked out by hand, an example from the spec, or a simple reference implementation.
+A tautological test passes by construction, so it can never disagree with the code.
+Take expected values from an independent source instead: a literal worked out by hand, an example from the spec, or a simple reference implementation.
 An expected value computed the way the code computes it agrees with every bug in that code.
 
 ### Mock only at system boundaries
@@ -164,7 +165,7 @@ A flaky test is a bug, so fix its cause instead of adding retries.
 
 ### Some things are not worth a test
 
-- Checks that cannot fail, such as recomputed expected values, mocks that return the value the test then asserts, constants compared with themselves, and copied lists or config.
+- Tautological checks that cannot fail, such as recomputed expected values, mocks that return the value the test then asserts, constants compared with themselves, and copied lists or config.
 - Implementation details, such as call counts, call order, private helpers, internal state, and the text of source files.
 - Glue, such as a pass-through or a one-line mapping.
   Test what it delegates to.

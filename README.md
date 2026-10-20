@@ -99,7 +99,7 @@ The Sequoia Ascent 2026 quotes come from the summary and cleaned-up transcript o
 | Await or handle every async operation | Matt, course-video-manager: "Every promise is awaited, handled or marked void". |
 | Every test can fail for a real bug | Matt, course-video-manager, word for word. |
 | Test behavior through the public interface | Matt, [tdd](https://github.com/mattpocock/skills/blob/main/skills/engineering/tdd/SKILL.md) and course-video-manager. |
-| Take expected values from an independent source | Matt, tdd: "Expected values must come from an independent source of truth". Karpathy, January 2026 notes, on keeping the naive version as the reference. |
+| No tautological tests | Matt, [tweet](https://x.com/mattpocockuk/status/2093068185830347088): "Tautological tests considered harmful." Matt, tdd: "Expected values must come from an independent source of truth". Karpathy, January 2026 notes, on keeping the naive version as the reference. |
 | Mock only at system boundaries | Matt, tdd and course-video-manager. |
 | One test per behavior, at the strongest boundary | Matt, [testing standards](https://github.com/mattpocock/course-video-manager/blob/main/docs/TESTING_STANDARDS.md): "Prefer one test at the right seam". openclaw, [test-audit](https://github.com/openclaw/openclaw/blob/main/.agents/skills/test-audit/SKILL.md): "one primary owner at strongest boundary". |
 | A regression test fails before the fix | Karpathy, January 2026 notes: "Get it to write tests first and then pass them". Matt, tdd: "Red before green". |
