@@ -31,7 +31,8 @@ Antigravity reads `~/.gemini/config/skills/`, so the installer makes that folder
 
 To add a skill of your own, put its folder in `~/.agents/skills/` and run the installer again, so Claude Code gets its link.
 Run `install.sh --check` to see what is out of date without changing anything, and `install.sh --remove` to take the links out.
-The installer never replaces a folder it did not make, and reports it instead.
+The installer never replaces a file, folder, or link it did not make, and reports it instead.
+A broken link to another clone's `skills/<name>` folder counts as its own, so moving the clone and rerunning the installer repoints it.
 An agent reads the folders of the machine it runs on, so a T3 thread running on another machine needs the installer run there too.
 
 Keep a skill out of `~/.agents/skills/` when it only works in one agent.

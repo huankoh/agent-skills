@@ -3,6 +3,7 @@
 # Antigravity reads ~/.gemini/config/skills, so that folder becomes a link to ~/.agents/skills.
 # --check prints what would change and exits 1 when anything would change or conflict.
 # --remove deletes the links this script makes: <folder>/<name> pointing at ~/.agents/skills/<name> or this repo's skills/<name>.
+# A broken link to some other */skills/<name> is taken for one an older clone made, and is repointed rather than reported.
 set -euo pipefail
 
 repo="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -68,6 +69,13 @@ ours() {
   [ "$target" = "$hub/$name" ] || [ "$target" = "$repo/skills/$name" ]
 }
 
+clone_shaped() {
+  case "$(readlink "$1")" in
+    */skills/"$(basename "$1")") return 0 ;;
+  esac
+  return 1
+}
+
 make_link() {
   mkdir -p "$(dirname "$2")"
   ln -s "$1" "$2"
@@ -77,7 +85,7 @@ sync_link() {
   local link="$1" target="$2"
   if [ -L "$link" ] && [ "$(readlink "$link")" = "$target" ]; then
     return
-  elif [ -L "$link" ] && { [ ! -e "$link" ] || same_folder "$link" "$target"; }; then
+  elif [ -L "$link" ] && { same_folder "$link" "$target" || { [ ! -e "$link" ] && clone_shaped "$link"; }; }; then
     change "repoint $link" ln -sfn "$target" "$link"
   elif present "$link"; then
     problem "$link because something this script did not make is already there"

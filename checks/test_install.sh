@@ -113,6 +113,18 @@ expect "a real folder in the way makes install exit 1" [ "$(status_of run)" = 1 
 expect "install leaves that real folder untouched" grep -q keep "$H/.claude/skills/coding-standards/SKILL.md"
 
 fresh_home
+mkdir -p "$H/.claude/skills"
+ln -s "$H/unmounted-drive/coding-standards" "$H/.claude/skills/coding-standards"
+expect "a broken link the user made makes install exit 1" [ "$(status_of run)" = 1 ]
+expect "install leaves a broken link the user made in place" link_is "$H/.claude/skills/coding-standards" "$H/unmounted-drive/coding-standards"
+
+fresh_home
+mkdir -p "$H/.claude/skills"
+ln -s "$repo/skills/coding-standards" "$H/.claude/skills/coding-standards"
+run --remove >/dev/null
+expect "--remove takes out a link shaped like the old installer's" absent "$H/.claude/skills/coding-standards"
+
+fresh_home
 mkdir -p "$H/.grok"
 run >/dev/null
 expect "install gives Grok Build links when it is installed" link_is "$H/.grok/skills/prune-tests" "$H/.agents/skills/prune-tests"
