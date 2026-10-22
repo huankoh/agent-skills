@@ -119,6 +119,16 @@ expect "a broken link the user made makes install exit 1" [ "$(status_of run)" =
 expect "install leaves a broken link the user made in place" link_is "$H/.claude/skills/coding-standards" "$H/unmounted-drive/coding-standards"
 
 fresh_home
+mkdir -p "$H/personal/mine" "$H/.agents/skills" "$H/.claude/skills"
+printf -- '---\nname: mine\ndescription: A skill the user keeps outside the hub.\n---\n' >"$H/personal/mine/SKILL.md"
+ln -s "$H/personal/mine" "$H/.agents/skills/mine"
+ln -s "$H/personal/mine" "$H/.claude/skills/mine"
+run >/dev/null
+expect "install leaves a working link the user made to the same skill" link_is "$H/.claude/skills/mine" "$H/personal/mine"
+run --remove >/dev/null
+expect "--remove keeps that working link the user made" link_is "$H/.claude/skills/mine" "$H/personal/mine"
+
+fresh_home
 mkdir -p "$H/.claude/skills"
 ln -s "$repo/skills/coding-standards" "$H/.claude/skills/coding-standards"
 run --remove >/dev/null

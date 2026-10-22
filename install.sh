@@ -3,7 +3,8 @@
 # Antigravity reads ~/.gemini/config/skills, so that folder becomes a link to ~/.agents/skills.
 # --check prints what would change and exits 1 when anything would change or conflict.
 # --remove deletes the links this script makes: <folder>/<name> pointing at ~/.agents/skills/<name> or this repo's skills/<name>.
-# A broken link to some other */skills/<name> is taken for one an older clone made, and is repointed rather than reported.
+# A link to some other */skills/<name> is taken for one an older clone made, and is repointed when it is broken or reaches the same skill.
+# Any other link that already reaches the same skill is left as it is.
 set -euo pipefail
 
 repo="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -85,8 +86,10 @@ sync_link() {
   local link="$1" target="$2"
   if [ -L "$link" ] && [ "$(readlink "$link")" = "$target" ]; then
     return
-  elif [ -L "$link" ] && { same_folder "$link" "$target" || { [ ! -e "$link" ] && clone_shaped "$link"; }; }; then
+  elif [ -L "$link" ] && clone_shaped "$link" && { [ ! -e "$link" ] || same_folder "$link" "$target"; }; then
     change "repoint $link" ln -sfn "$target" "$link"
+  elif [ -L "$link" ] && same_folder "$link" "$target"; then
+    return
   elif present "$link"; then
     problem "$link because something this script did not make is already there"
   else
