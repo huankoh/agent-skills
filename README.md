@@ -10,6 +10,7 @@ An agent without skill support can follow a `SKILL.md` that you paste into the c
 | `skills/coding-standards/` | Interviews you to write or extend a repo's `CODING_STANDARDS.md`, and runs only when you ask for it. |
 | `skills/coding-standards/assets/CODING_STANDARDS.md` | The baseline rules, distilled from Matt Pocock and Andrej Karpathy. Copy it into a repo root as it is, or let the interview tailor it. |
 | `install.sh` | Makes `~/.agents/skills/` the one skill folder that every agent on the machine reads. |
+| `checks/test_install.sh` | Runs `install.sh` in throwaway home folders and checks each case it must handle. Run it after changing the installer. |
 
 ## Install on a machine
 

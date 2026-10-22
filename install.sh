@@ -1,15 +1,11 @@
 #!/usr/bin/env bash
-# Makes ~/.agents/skills the one skill folder for every coding agent on this machine.
-# Codex, Cursor, Muse Code, OpenCode, and Pi read ~/.agents/skills directly.
-# Claude Code reads only ~/.claude/skills, so every skill in ~/.agents/skills gets a link there.
-# Grok Build gets the same links in ~/.grok/skills when it is installed.
+# Claude Code does not read ~/.agents/skills, so every skill there gets a link in ~/.claude/skills.
 # Antigravity reads ~/.gemini/config/skills, so that folder becomes a link to ~/.agents/skills.
-# The skills in this repo are linked into ~/.agents/skills first.
-# Run it again after adding or removing a skill in ~/.agents/skills.
-# --check prints what would change and exits 1 when anything would. --remove deletes every link this script makes.
+# --check prints what would change and exits 1 when anything would change or conflict.
+# --remove deletes the links this script makes: <folder>/<name> pointing at ~/.agents/skills/<name> or this repo's skills/<name>.
 set -euo pipefail
 
-repo="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 hub="$HOME/.agents/skills"
 antigravity="$HOME/.gemini/config/skills"
 old_antigravity="$HOME/.gemini/antigravity/skills"
@@ -21,9 +17,13 @@ case "$mode" in
     exit 2
     ;;
 esac
+if [ ! -d "$repo/skills" ]; then
+  echo "install.sh found no skills folder next to it. Run it from the repo clone, not through a link to the script." >&2
+  exit 2
+fi
 
 farms=("$HOME/.claude/skills")
-[ -d "$HOME/.grok" ] && farms+=("$HOME/.grok/skills")
+if [ -d "$HOME/.grok" ]; then farms+=("$HOME/.grok/skills"); fi
 
 changes=0
 problems=0
@@ -53,76 +53,89 @@ present() {
   [ -e "$1" ] || [ -L "$1" ]
 }
 
-owned() {
-  [ -L "$1" ] || return 1
-  case "$(readlink "$1")" in
-    "$hub"/* | "$repo"/skills/*) return 0 ;;
-  esac
-  return 1
+same_folder() {
+  local a b
+  a="$(resolve "$1")"
+  b="$(resolve "$2")"
+  [ -n "$a" ] && [ "$a" = "$b" ]
 }
 
-link_folder() {
+ours() {
+  [ -L "$1" ] || return 1
+  local name target
+  name="$(basename "$1")"
+  target="$(readlink "$1")"
+  [ "$target" = "$hub/$name" ] || [ "$target" = "$repo/skills/$name" ]
+}
+
+make_link() {
   mkdir -p "$(dirname "$2")"
   ln -s "$1" "$2"
 }
 
-[ "$mode" = install ] && mkdir -p "$hub"
-
-for skill in "$repo"/skills/*/; do
-  skill="${skill%/}"
-  [ -f "$skill/SKILL.md" ] || continue
-  link="$hub/$(basename "$skill")"
-  if [ "$mode" = --remove ]; then
-    if [ -L "$link" ] && [ "$(readlink "$link")" = "$skill" ]; then change "remove $link" rm "$link"; fi
-  elif [ -L "$link" ] && [ "$(readlink "$link")" = "$skill" ]; then
-    :
+sync_link() {
+  local link="$1" target="$2"
+  if [ -L "$link" ] && [ "$(readlink "$link")" = "$target" ]; then
+    return
+  elif [ -L "$link" ] && { [ ! -e "$link" ] || same_folder "$link" "$target"; }; then
+    change "repoint $link" ln -sfn "$target" "$link"
   elif present "$link"; then
-    problem "$link because another skill with this name is already there"
+    problem "$link because something this script did not make is already there"
   else
-    change "link $link" ln -s "$skill" "$link"
+    change "link $link" make_link "$target" "$link"
   fi
-done
+}
 
-for farm in "${farms[@]}"; do
-  if [ "$mode" = --remove ]; then
-    for link in "$farm"/*; do
-      if owned "$link"; then change "remove $link" rm "$link"; fi
-    done
-    continue
-  fi
-  [ "$mode" = install ] && mkdir -p "$farm"
-  for entry in "$hub"/*; do
+prune_stale() {
+  local link
+  for link in "$1"/*; do
+    if ours "$link" && [ ! -e "$link" ]; then change "remove stale $link" rm "$link"; fi
+  done
+}
+
+remove_ours() {
+  local link
+  for link in "$1"/*; do
+    if ours "$link"; then change "remove $link" rm "$link"; fi
+  done
+}
+
+skill_names() {
+  local entry name seen=" "
+  for entry in "$hub"/* "$repo"/skills/*; do
     name="$(basename "$entry")"
     [ -f "$entry/SKILL.md" ] || continue
-    link="$farm/$name"
-    if [ -L "$link" ] && [ "$(readlink "$link")" = "$entry" ]; then
-      continue
-    elif [ -L "$link" ] && [ "$(resolve "$link")" = "$(resolve "$entry")" ]; then
-      change "repoint $link" ln -sfn "$entry" "$link"
-    elif present "$link"; then
-      problem "$link because a different skill with this name is already there"
-    else
-      change "link $link" ln -s "$entry" "$link"
-    fi
+    case "$seen" in *" $name "*) continue ;; esac
+    seen="$seen$name "
+    echo "$name"
   done
-  for link in "$farm"/*; do
-    if owned "$link" && [ ! -e "$link" ]; then change "remove stale $link" rm "$link"; fi
-  done
-done
+}
 
 if [ "$mode" = --remove ]; then
-  if [ -L "$antigravity" ] && [ "$(readlink "$antigravity")" = "$hub" ]; then change "remove $antigravity" rm "$antigravity"; fi
-elif [ -L "$antigravity" ] && [ "$(readlink "$antigravity")" = "$hub" ]; then
-  :
-elif present "$antigravity"; then
-  problem "$antigravity because it is not a link to $hub. Move its skills into $hub, delete it, and run this again"
+  for farm in "${farms[@]}"; do
+    if ! same_folder "$farm" "$hub"; then remove_ours "$farm"; fi
+  done
+  if ! same_folder "$old_antigravity" "$hub"; then remove_ours "$old_antigravity"; fi
+  remove_ours "$hub"
+  if [ -L "$antigravity" ] && same_folder "$antigravity" "$hub"; then change "remove $antigravity" rm "$antigravity"; fi
 else
-  change "link $antigravity" link_folder "$hub" "$antigravity"
-fi
+  for skill in "$repo"/skills/*/; do
+    skill="${skill%/}"
+    if [ -f "$skill/SKILL.md" ]; then sync_link "$hub/$(basename "$skill")" "$skill"; fi
+  done
+  prune_stale "$hub"
 
-for link in "$old_antigravity"/*; do
-  if owned "$link"; then change "remove $link, since Antigravity reads $antigravity" rm "$link"; fi
-done
+  for farm in "${farms[@]}"; do
+    if same_folder "$farm" "$hub"; then continue; fi
+    while IFS= read -r name; do
+      sync_link "$farm/$name" "$hub/$name"
+    done < <(skill_names)
+    prune_stale "$farm"
+  done
+
+  sync_link "$antigravity" "$hub"
+  if ! same_folder "$old_antigravity" "$hub"; then remove_ours "$old_antigravity"; fi
+fi
 
 if [ "$changes" -eq 0 ] && [ "$problems" -eq 0 ]; then echo "nothing to change"; fi
 if [ "$problems" -gt 0 ] || { [ "$mode" = --check ] && [ "$changes" -gt 0 ]; }; then exit 1; fi
