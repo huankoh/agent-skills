@@ -9,7 +9,8 @@ An agent without skill support can follow a `SKILL.md` that you paste into the c
 | `skills/prune-tests/` | Finds tests that cannot catch a real bug, proves what still covers each behavior, and deletes the rest in reviewable batches. Adapted for any repo from openclaw's `test-audit` skill. |
 | `skills/coding-standards/` | Interviews you to write or extend a repo's `CODING_STANDARDS.md`, and runs only when you ask for it. |
 | `skills/coding-standards/assets/CODING_STANDARDS.md` | The baseline rules, distilled from Matt Pocock and Andrej Karpathy. Copy it into a repo root as it is, or let the interview tailor it. |
-| `install.sh` | Links every skill into the folders the agents read. |
+| `install.sh` | Makes `~/.agents/skills/` the one skill folder that every agent on the machine reads. |
+| `checks/test_install.sh` | Runs `install.sh` in throwaway home folders and checks each case it must handle. Run it after changing the installer. |
 
 ## Install on a machine
 
@@ -21,24 +22,36 @@ git clone <your-repo-url> ~/code/agent-skills
 ~/code/agent-skills/install.sh
 ```
 
-The installer links each skill into `~/.claude/skills/` and `~/.agents/skills/`, and into the Grok Build and Antigravity folders when those agents are installed.
-The links point back into the clone, so `git pull` updates every agent at once.
-Run the installer again after adding a new skill, and run `install.sh --remove` to take the links out.
+The installer makes `~/.agents/skills/` the one folder for every skill on the machine, this repo's and your own.
+It links this repo's skills into `~/.agents/skills/`, and the links point back into the clone, so `git pull` updates every agent at once.
+Codex, Cursor, Muse Code, OpenCode, and Pi read `~/.agents/skills/` themselves.
+Claude Code reads only `~/.claude/skills/`, so the installer gives it a link to every skill in `~/.agents/skills/`.
+Grok Build gets the same links in `~/.grok/skills/` when it is installed.
+Antigravity reads `~/.gemini/config/skills/`, so the installer makes that folder a link to `~/.agents/skills/`.
+
+To add a skill of your own, put its folder in `~/.agents/skills/` and run the installer again, so Claude Code gets its link.
+Run `install.sh --check` to see what is out of date without changing anything, and `install.sh --remove` to take the links out.
+The installer never replaces a file, folder, or link it did not make, and reports it instead.
+A broken link to another clone's `skills/<name>` folder counts as its own, so moving the clone and rerunning the installer repoints it.
+A link you made yourself that already reaches the same skill is left as it is.
 An agent reads the folders of the machine it runs on, so a T3 thread running on another machine needs the installer run there too.
+
+Keep a skill out of `~/.agents/skills/` when it only works in one agent.
+For example, a Codex copy of a Claude Code command belongs in `~/.codex/skills/`, because in `~/.claude/skills/` it would replace Claude Code's own command of the same name.
 
 | Agent | Reads user skills from | Checked |
 | --- | --- | --- |
-| Claude Code | `~/.claude/skills/` | Found a linked probe skill |
-| Codex | `~/.agents/skills/` | Found a linked probe skill |
-| Cursor | `~/.agents/skills/` and `~/.claude/skills/`, plus `~/.cursor/skills/` and `~/.codex/skills/` | Found a linked probe skill |
-| OpenCode | `~/.agents/skills/` and `~/.claude/skills/`, plus `~/.config/opencode/skills/` | Found a linked probe skill |
-| Muse Code | `~/.agents/skills/`, `~/.claude/skills/`, `~/.codex/skills/`, and `~/.config/muse/skills/` | Found a linked probe skill, listed once when it sat in two folders |
-| Pi | `~/.agents/skills/` | Not installed here, so not checked |
+| Claude Code | `~/.claude/skills/` only | `claude -p` startup list showed a probe linked there and not one in `~/.agents/skills/` |
+| Codex | `~/.agents/skills/` and `~/.codex/skills/` | `codex app-server` `skills/list` showed the probes |
+| Cursor | `~/.agents/skills/`, `~/.claude/skills/`, and `~/.codex/skills/`, listing each name once | A Cursor agent in T3 listed each probe once |
+| OpenCode | `~/.agents/skills/` and `~/.claude/skills/`, listing each name once | `opencode run` listed each probe once |
+| Muse Code | `~/.agents/skills/`, `~/.claude/skills/`, and `~/.codex/skills/`, listing each name once | `muse skills list` showed each probe once |
+| Pi | `~/.agents/skills/` | The `get_commands` RPC listed the probes |
 | Grok Build | `~/.grok/skills/` | Not installed here, so not checked |
-| Antigravity | `~/.gemini/antigravity/skills/` | Not installed here, so not checked |
+| Antigravity | `~/.gemini/config/skills/` | T3's Antigravity driver and Google's docs name this folder |
 
-The checks ran on macOS on 2026-10-20.
-Each agent was asked to list a probe skill linked into both folders, and the probe was removed afterwards.
+The checks ran on macOS on 2026-10-22.
+Each probe was a skill in `~/.agents/skills/`, one of them also linked into `~/.claude/skills/`, and both were removed afterwards.
 
 ## Give a repo its standards
 
