@@ -143,8 +143,8 @@ tools_present() {
     "$H/.t3/userdata/providers/antigravity/real/antigravity-cli/skills"
 }
 source_skills() {
-  local name
-  source="$H/.claude/plugins/cache/t3-pstack-science/t3-pstack-science/$pin/skills"
+  local name version="${1:-$pin}" config="${2:-$H/.claude}"
+  source="$config/plugins/cache/t3-pstack-science/t3-pstack-science/$version/skills"
   for name in grill-me domain-modeling codebase-design improve-codebase-architecture wizard; do
     mkdir -p "$source/$name"
     echo "$name" >"$source/$name/SKILL.md"
@@ -246,6 +246,7 @@ expect 'presentation feature branch is not pulled' [ "$(git -C "$H/code/ppt-mast
 expect 'presentation branch still gets its link' test -f "$H/.claude/skills/ppt-master/SKILL.md"
 
 fresh_home
+source_skills
 extra=("FAKE_PSTACK_VERSION=$pin" "FAKE_ORACLE_VERSION=$ORACLE_VERSION")
 run
 expect 'matching versions succeed despite the expected warning' [ "$status" = 0 ]
@@ -316,6 +317,41 @@ run
 expect 'an owned ported link moves to the Cursor source' link_is "$H/.pi/agent/skills/wizard" "$H/.cursor/plugins/local/t3-pstack-science/skills/wizard"
 
 fresh_home
+mkdir -p "$H/.pi/agent"
+source_skills 2.9.0
+source_skills 2.10.0-science.9
+source_skills 2.10.0-science.12
+newest_source="$source"
+extra=("FAKE_PSTACK_VERSION=$pin")
+run
+expect 'ported source uses the numerically highest Claude cache' link_is "$H/.pi/agent/skills/wizard" "$newest_source/wizard"
+source_skills 2.10.0
+run
+expect 'a stable cache release sorts after its prereleases' link_is "$H/.pi/agent/skills/wizard" "$source/wizard"
+
+fresh_home
+mkdir -p "$H/.pi/agent"
+source_skills 3.0.0 "$H/claude-config"
+extra=("FAKE_PSTACK_VERSION=$pin" "CLAUDE_CONFIG_DIR=$H/claude-config")
+run
+expect 'ported source falls back to CLAUDE_CONFIG_DIR' link_is "$H/.pi/agent/skills/wizard" "$source/wizard"
+source_skills
+run
+expect 'the default Claude cache precedes CLAUDE_CONFIG_DIR' link_is "$H/.pi/agent/skills/wizard" "$source/wizard"
+
+fresh_home
+mkdir -p "$H/.pi/agent"
+extra=("FAKE_PSTACK_VERSION=$pin")
+run
+expect 'a present destination without a source fails' [ "$status" = 1 ]
+expect 'a missing ported source is reported as failed' grep -q '^ported skills - failed - no pstack skills source' "$output"
+expect 'a missing source creates no ported folder' absent "$H/.pi/agent/skills"
+rm "$case_dir/bin/gemini"
+rmdir "$H/.pi/agent"
+run
+expect 'no destination tool permits the ported step to skip' grep -q '^ported skills - skipped - no destination tools' "$output"
+
+fresh_home
 mkdir -p "$H/.pi/agent/skills" "$H/personal/wizard"
 echo keep >"$H/personal/wizard/SKILL.md"
 ln -s "$H/personal/wizard" "$H/.pi/agent/skills/wizard"
@@ -355,6 +391,7 @@ fresh_home
 printf '\n# updated fixture\n' >>"$suite/source/sync"
 git -C "$suite/source" add sync
 git -C "$suite/source" commit -qm 'Update sync fixture'
+source_skills
 extra=("FAKE_PSTACK_VERSION=$pin" "FAKE_ORACLE_VERSION=$ORACLE_VERSION")
 run --check
 expect 'repo check reports behind commits' grep -q 'is 1 commits behind' "$output"

@@ -39,7 +39,8 @@ Codex, Cursor, Muse Code, OpenCode, and Pi read the hub themselves.
 
 Pstack's installer manages its plugin homes, including Cursor when `~/.cursor` exists and Muse when `muse` is on PATH.
 The five ported skills get separate links for detected Pi, OpenCode, Gemini CLI, Antigravity CLI, and T3 Antigravity profiles.
-Their source is Cursor's local pstack copy when available, then the pinned Claude Code cache.
+Their source is Cursor's local pstack copy when available, then the highest-versioned default Claude Code cache, then the cache under `CLAUDE_CONFIG_DIR`.
+A detected destination tool without a pstack source makes this step fail.
 They stay outside the hub because Codex, Cursor, and Muse already load them from the plugin.
 
 ## Sync each day
