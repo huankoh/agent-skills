@@ -166,6 +166,22 @@ step_repo() {
   source "$repo/sync.conf"
 }
 
+ppt_master_origin() {
+  local origin name
+  origin="$(git -C "$1" config --get remote.origin.url)" || origin=''
+  case "$origin" in
+    https://github.com/*) name="${origin#https://github.com/}" ;;
+    ssh://git@github.com/*) name="${origin#ssh://git@github.com/}" ;;
+    ssh://github.com/*) name="${origin#ssh://github.com/}" ;;
+    git@github.com:*) name="${origin#git@github.com:}" ;;
+    *) name='' ;;
+  esac
+  if [ "${name%.git}" != "$PPT_MASTER_REPO" ]; then
+    report failed "$1 origin ${origin:-missing} does not name $PPT_MASTER_REPO; left untouched"
+    return 1
+  fi
+}
+
 step_ppt_master() {
   local directory="$HOME/code/ppt-master-white-sage"
   if ! present "$directory"; then
@@ -178,6 +194,7 @@ step_ppt_master() {
       report changed "cloned $PPT_MASTER_REPO into $directory"
     fi
   elif [ -d "$directory/.git" ] || [ -f "$directory/.git" ]; then
+    ppt_master_origin "$directory" || return 1
     sync_git "$directory"
   else
     report failed "left $directory untouched because it is not a git clone"

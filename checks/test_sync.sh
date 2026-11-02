@@ -73,7 +73,12 @@ case "$tool" in
     fi
     ;;
   gh)
-    if [ "$1" = repo ]; then exec git clone -q "$PPT_REMOTE" "$4"; fi
+    if [ "$1" = repo ]; then
+      git clone -q "$PPT_REMOTE" "$4"
+      git -C "$4" remote set-url origin https://github.com/huankoh/ppt-master-white-sage.git
+      git -C "$4" config "url.$PPT_REMOTE.insteadOf" https://github.com/huankoh/ppt-master-white-sage.git
+      exit
+    fi
     case "$2" in
       */commits/*) echo '1111111111111111111111111111111111111111' ;;
       */contents/skills/oracle/SKILL.md) echo 'verbatim updated Oracle skill' ;;
@@ -238,6 +243,8 @@ expect 'presentation conflict is reported' grep -q 'left .*skills/ppt-master unt
 fresh_home
 mkdir -p "$H/code"
 git clone -q "$suite/ppt.git" "$H/code/ppt-master-white-sage"
+git -C "$H/code/ppt-master-white-sage" remote set-url origin https://github.com/huankoh/ppt-master-white-sage.git
+git -C "$H/code/ppt-master-white-sage" config "url.$suite/ppt.git.insteadOf" https://github.com/huankoh/ppt-master-white-sage.git
 git -C "$H/code/ppt-master-white-sage" checkout -q -b venv-path-through-links
 ppt_head="$(git -C "$H/code/ppt-master-white-sage" rev-parse HEAD)"
 run
@@ -245,6 +252,33 @@ expect 'presentation feature branch is accepted' [ "$status" = 0 ]
 expect 'presentation branch is reported' grep -q 'is on venv-path-through-links; pull skipped' "$output"
 expect 'presentation feature branch is not pulled' [ "$(git -C "$H/code/ppt-master-white-sage" rev-parse HEAD)" = "$ppt_head" ]
 expect 'presentation branch still gets its link' test -f "$H/.claude/skills/ppt-master/SKILL.md"
+
+for origin in https://github.com/huankoh/ppt-master-white-sage https://github.com/huankoh/ppt-master-white-sage.git \
+  ssh://git@github.com/huankoh/ppt-master-white-sage ssh://git@github.com/huankoh/ppt-master-white-sage.git \
+  git@github.com:huankoh/ppt-master-white-sage git@github.com:huankoh/ppt-master-white-sage.git; do
+  fresh_home
+  directory="$H/code/ppt-master-white-sage"
+  git clone -q "$suite/ppt.git" "$directory"
+  git -C "$directory" remote set-url origin "$origin"
+  git -C "$directory" config "url.$suite/ppt.git.insteadOf" "$origin"
+  run
+  expect "presentation origin accepts $origin" [ "$status" = 0 ]
+  expect 'a matching origin gets its skill link' link_is "$H/.agents/skills/ppt-master" "$directory/skills/ppt-master"
+done
+
+fresh_home
+directory="$H/code/ppt-master-white-sage"
+git clone -q "$suite/ppt.git" "$directory"
+git -C "$directory" remote set-url origin https://github.com/someone/other-project.git
+git -C "$directory" config "url.$suite/ppt.git.insteadOf" https://github.com/someone/other-project.git
+run
+expect 'an unrelated presentation origin fails' [ "$status" = 1 ]
+expect 'an unrelated presentation origin is reported' grep -q '^ppt-master - failed - .*origin.*does not name' "$output"
+expect 'an unrelated presentation clone is not pulled' absent "$directory/.git/FETCH_HEAD"
+expect 'an unrelated presentation skill is never linked' absent "$H/.agents/skills/ppt-master"
+run --check
+expect 'check rejects an unrelated presentation origin' grep -q '^ppt-master - failed - .*origin.*does not name' "$output"
+expect 'check does not fetch an unrelated presentation clone' absent "$directory/.git/FETCH_HEAD"
 
 fresh_home
 source_skills
