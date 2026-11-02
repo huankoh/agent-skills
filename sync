@@ -1,0 +1,458 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+repo="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+mode=sync
+args=("$@")
+case "$#:${1:-}" in
+  0:) ;;
+  1:--check) mode=check ;;
+  *) echo "usage: sync [--check]" >&2; exit 2 ;;
+esac
+
+# shellcheck source=sync.conf
+source "$repo/sync.conf" || exit 1
+names=()
+results=()
+details=()
+failed=0
+pending=0
+node_ready=0
+original_path="$PATH"
+fallback_node=''
+
+report() {
+  local state="$1" message="$2"
+  case "$state:$result" in
+    failed:*) result=failed ;;
+    would\ change:failed | changed:failed | skipped:failed) ;;
+    would\ change:*) result='would change' ;;
+    changed:would\ change | skipped:would\ change | skipped:changed) ;;
+    changed:*) result=changed ;;
+    skipped:*) result=skipped ;;
+  esac
+  detail="${detail:+$detail; }$message"
+  printf '  %s - %s\n' "$state" "$message"
+}
+
+change() {
+  local description="$1"
+  shift
+  if [ "$mode" = check ]; then
+    report 'would change' "$description"
+  elif "$@"; then
+    report changed "$description"
+  else
+    report failed "$description"
+    return 1
+  fi
+}
+
+present() { [ -e "$1" ] || [ -L "$1" ]; }
+resolve() { (cd -P "$1" 2>/dev/null && pwd -P); }
+same_folder() {
+  local left right
+  left="$(resolve "$1")" || return 1
+  right="$(resolve "$2")" || return 1
+  [ "$left" = "$right" ]
+}
+make_link() {
+  mkdir -p "$(dirname "$2")" && ln -s "$1" "$2"
+}
+sync_link() {
+  local target="$1" link="$2" old
+  if [ -L "$link" ]; then
+    old="$(readlink "$link")"
+    if [ "$old" = "$target" ] || same_folder "$link" "$target"; then return; fi
+  fi
+  if present "$link"; then
+    report failed "left $link untouched because an unrelated file, folder, or link is there"
+    return 1
+  fi
+  change "link $link to $target" make_link "$target" "$link"
+}
+
+latest_pstack_cache() {
+  local cache="$1/plugins/cache/t3-pstack-science/t3-pstack-science" candidate version latest
+  latest="$(
+    for candidate in "$cache"/*/skills; do
+      [ -d "$candidate" ] || continue
+      version="${candidate%/skills}"; version="${version##*/}"
+      # Version sort places ~ before a stable release and compares suffix numbers numerically.
+      printf '%s\n' "${version/-/~}"
+    done | LC_ALL=C sort -V | tail -n 1
+  )"
+  [ -n "$latest" ] || return 1
+  printf '%s/%s/skills\n' "$cache" "${latest/\~/-}"
+}
+
+pstack_skills() {
+  local cursor="$HOME/.cursor/plugins/local/t3-pstack-science/skills"
+  if [ -d "$cursor" ]; then printf '%s\n' "$cursor"
+  elif latest_pstack_cache "$HOME/.claude"; then return
+  elif [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then latest_pstack_cache "$CLAUDE_CONFIG_DIR"
+  else return 1
+  fi
+}
+
+step_node() {
+  local version major candidate newest='' best=0 best_minor=0 best_patch=0 minor patch
+  version="$(node --version 2>/dev/null)" || version=''
+  major="${version#v}"; major="${major%%.*}"
+  if [[ "$major" =~ ^[0-9]+$ ]] && [ "$major" -ge 24 ]; then
+    node_ready=1
+    detail="$version on PATH"
+    return
+  fi
+  for candidate in "$HOME"/.nvm/versions/node/v*/bin; do
+    [ -x "$candidate/node" ] || continue
+    version="$("$candidate/node" --version 2>/dev/null)" || continue
+    if [[ "$version" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+      major="${BASH_REMATCH[1]}"; minor="${BASH_REMATCH[2]}"; patch="${BASH_REMATCH[3]}"
+      [ "$major" -ge 24 ] || continue
+      if [ "$major" -gt "$best" ] || { [ "$major" -eq "$best" ] && [ "$minor" -gt "$best_minor" ]; } ||
+        { [ "$major" -eq "$best" ] && [ "$minor" -eq "$best_minor" ] && [ "$patch" -gt "$best_patch" ]; }; then
+        newest="$candidate"; best="$major"; best_minor="$minor"; best_patch="$patch"
+      fi
+    fi
+  done
+  if [ -n "$newest" ]; then
+    fallback_node="$newest/node"
+    export PATH="$newest:$PATH"
+    node_ready=1
+    detail="using $newest for this run"
+  else
+    report skipped 'Node 24+ is unavailable on PATH and under ~/.nvm/versions/node; install it to enable pstack and Oracle'
+  fi
+}
+
+sync_git() {
+  local directory="$1" branch before after upstream behind
+  branch="$(git -C "$directory" symbolic-ref --quiet --short HEAD)" || branch='detached HEAD'
+  if [ "$branch" != main ]; then
+    report skipped "$directory is on $branch; pull skipped"
+    return
+  fi
+  if [ "$mode" = check ]; then
+    if ! git -C "$directory" fetch; then report failed "fetch $directory"; return 1; fi
+    upstream="$(git -C "$directory" rev-parse --abbrev-ref '@{upstream}' 2>/dev/null)" || {
+      report failed "$directory has no upstream"; return 1;
+    }
+    behind="$(git -C "$directory" rev-list --count "HEAD..$upstream")" || return 1
+    if [ "$behind" -gt 0 ]; then report 'would change' "$directory is $behind commits behind $upstream"
+    else printf '  %s is 0 commits behind %s\n' "$directory" "$upstream"
+    fi
+    return
+  fi
+  if [ -n "$(git -C "$directory" status --porcelain)" ]; then
+    report skipped "$directory has a dirty tree; pull skipped"
+    return
+  fi
+  before="$(git -C "$directory" rev-parse HEAD)" || return 1
+  if ! git -C "$directory" pull --ff-only; then report failed "pull $directory with --ff-only"; return 1; fi
+  after="$(git -C "$directory" rev-parse HEAD)" || return 1
+  if [ "$before" != "$after" ]; then report changed "pulled $directory from $before to $after"; fi
+}
+
+step_repo() {
+  local before after
+  before="$(git hash-object "$repo/sync")" || return 1
+  sync_git "$repo" || return 1
+  after="$(git hash-object "$repo/sync")" || return 1
+  if [ "$mode" = sync ] && [ "$before" != "$after" ] && [ "${AGENT_SKILLS_SYNC_REEXEC:-0}" != 1 ]; then
+    echo '  sync updated itself; restarting once'
+    export AGENT_SKILLS_SYNC_REEXEC=1
+    export PATH="$original_path"
+    exec "$BASH" "$repo/sync" ${args[@]+"${args[@]}"}
+  fi
+  # A pull can change pins without changing this script.
+  # shellcheck source=sync.conf
+  source "$repo/sync.conf"
+}
+
+ppt_master_origin() {
+  local origin name
+  origin="$(git -C "$1" config --get remote.origin.url)" || origin=''
+  case "$origin" in
+    https://github.com/*) name="${origin#https://github.com/}" ;;
+    ssh://git@github.com/*) name="${origin#ssh://git@github.com/}" ;;
+    ssh://github.com/*) name="${origin#ssh://github.com/}" ;;
+    git@github.com:*) name="${origin#git@github.com:}" ;;
+    *) name='' ;;
+  esac
+  if [ "${name%.git}" != "$PPT_MASTER_REPO" ]; then
+    report failed "$1 origin ${origin:-missing} does not name $PPT_MASTER_REPO; left untouched"
+    return 1
+  fi
+}
+
+step_ppt_master() {
+  local directory="$HOME/code/ppt-master-white-sage"
+  if ! present "$directory"; then
+    if [ "$mode" = check ]; then
+      report 'would change' "clone $PPT_MASTER_REPO into $directory and link its skill"
+    else
+      if ! mkdir -p "$(dirname "$directory")" || ! gh repo clone "$PPT_MASTER_REPO" "$directory"; then
+        report failed "clone $PPT_MASTER_REPO into $directory"; return 1
+      fi
+      report changed "cloned $PPT_MASTER_REPO into $directory"
+    fi
+  elif [ -d "$directory/.git" ] || [ -f "$directory/.git" ]; then
+    ppt_master_origin "$directory" || return 1
+    sync_git "$directory"
+  else
+    report failed "left $directory untouched because it is not a git clone"
+    return 1
+  fi
+  if [ -f "$directory/skills/ppt-master/SKILL.md" ]; then
+    sync_link "$directory/skills/ppt-master" "$HOME/.agents/skills/ppt-master"
+  elif [ "$mode" != check ] || present "$directory"; then
+    report failed "$directory/skills/ppt-master/SKILL.md is missing"
+  fi
+  if [ ! -d "$directory/.venv" ]; then echo "  note: $directory needs its skill venv; sync does not create it"; fi
+}
+
+step_skills() {
+  local output status=0
+  if [ "$mode" = check ]; then output="$("$BASH" "$repo/install.sh" --check 2>&1)" || status=$?
+  else output="$("$BASH" "$repo/install.sh" 2>&1)" || status=$?
+  fi
+  printf '%s\n' "$output"
+  if [ "$status" -ne 0 ]; then
+    if [ "$mode" = check ] && [ "$status" -eq 1 ] && [[ "$output" != *'skipped '* ]]; then
+      report 'would change' 'install.sh would link skills'
+    else report failed "install.sh exited $status; see reported conflicts above"
+    fi
+  elif [ "$output" != 'nothing to change' ]; then report changed 'install.sh linked skills'
+  fi
+}
+
+replace_sheet() {
+  local target="$1" link="$2" backup="$3"
+  mkdir -p "$(dirname "$link")" || return 1
+  if [ -n "$backup" ]; then
+    if present "$backup"; then report failed "backup path $backup appeared before the move"; return 1; fi
+    mv -n "$link" "$backup" || return 1
+    # BSD mv reports success when -n leaves an existing destination untouched.
+    if present "$link"; then report failed "backup path $backup appeared during the move; sheet left untouched"; return 1; fi
+  elif present "$link"; then rm "$link" || return 1
+  fi
+  ln -s "$target" "$link"
+}
+
+step_model_sheet() {
+  local target="$repo/config/models.md" link="${XDG_CONFIG_HOME:-$HOME/.config}/t3-pstack-science/models.md"
+  local backup='' source validator suffix=0
+  if [ -L "$link" ] && [ "$(readlink "$link")" = "$target" ]; then :
+  elif [ -f "$link" ] && [ ! -L "$link" ] && cmp -s "$target" "$link"; then
+    change "replace identical $link with a link" replace_sheet "$target" "$link" '' || return 1
+  else
+    if present "$link"; then
+      backup="$link.bak-$(date -u +%Y%m%dT%H%M%SZ)"
+      while present "$backup"; do suffix=$((suffix + 1)); backup="$link.bak-$(date -u +%Y%m%dT%H%M%SZ)-$suffix"; done
+    fi
+    change "link $link${backup:+ after backing up to $backup}" replace_sheet "$target" "$link" "$backup" || return 1
+    if [ -n "$backup" ]; then printf '  compare with: diff -u %q %q\n' "$backup" "$target"; fi
+  fi
+  source="$(pstack_skills)" || return 0
+  validator="$source/setup-pstack/scripts/t3-sheet.mjs"
+  [ -f "$validator" ] || return 0
+  if [ "$node_ready" -ne 1 ]; then echo '  note: sheet validation needs Node 24+'; return; fi
+  # The CLI requires a live T3 catalog; the exported checker supports offline validation.
+  if node --input-type=module - "$validator" "$target" <<'JS'
+import { readFileSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
+const url = pathToFileURL(process.argv[2]);
+const { parseSheet, checkSheet } = await import(url.href);
+const models = JSON.parse(readFileSync(new URL('../../../models.json', url), 'utf8'));
+const problems = checkSheet(parseSheet(readFileSync(process.argv[3], 'utf8')), { models, catalog: null });
+for (const problem of problems) console.error(problem);
+process.exitCode = problems.length ? 1 : 0;
+JS
+  then echo '  model sheet validation passed (offline; live provider availability is not checked)'
+  else report failed 'model sheet validation failed'
+  fi
+}
+
+pstack_report() {
+  node --input-type=module -e '
+    try {
+    let input = "";
+    for await (const chunk of process.stdin) input += chunk;
+    const report = JSON.parse(input);
+    if (typeof report.version !== "string" || !report.version || !Array.isArray(report.homes) ||
+        !report.homes.length || !Number.isInteger(report.failed)) process.exit(2);
+    const checks = [...report.homes.flatMap(home => home.checks), ...(report.sheet?.checks ?? [])];
+    if (checks.some(check => typeof check?.ok !== "boolean")) process.exit(2);
+    for (const check of checks.filter(check => !check.ok))
+      console.error(`${check.warn ? "warning" : "needs update"}: ${check.name}: ${check.detail}`);
+    console.log(report.version);
+    process.exit(report.failed || checks.some(check => !check.ok && !check.warn) ? 1 : 0);
+    } catch (error) { console.error(error.message); process.exit(2); }
+  '
+}
+
+step_pstack() {
+  local output version status=0 parsed=0 flags=()
+  if [ "$node_ready" -ne 1 ]; then report skipped 'pstack needs Node 24+ for this sync'; return; fi
+  if [ -d "$HOME/.cursor" ]; then flags+=(--cursor); fi
+  if command -v muse >/dev/null 2>&1; then flags+=(--muse); fi
+  output="$(npx -y github:huankoh/t3-pstack-science doctor ${flags[@]+"${flags[@]}"} --json)" || status=$?
+  version="$(printf '%s' "$output" | pstack_report)" || parsed=$?
+  if [ "$parsed" -gt 1 ] || [ "$status" -gt 1 ] || { [ "$status" -ne 0 ] && [ "$parsed" -eq 0 ]; }; then
+    report failed "pstack doctor failed or returned invalid JSON (exit $status)"
+    return 1
+  fi
+  if [ "$parsed" -eq 0 ]; then detail="every pstack home passes at $version on rolling main"; return; fi
+  if [ "$mode" = check ]; then report 'would change' "update pstack from rolling main ($version)"; return; fi
+  status=0; parsed=0
+  output="$(npx -y github:huankoh/t3-pstack-science update ${flags[@]+"${flags[@]}"} --json)" || status=$?
+  version="$(printf '%s' "$output" | pstack_report)" || parsed=$?
+  if [ "$status" -ne 0 ] || [ "$parsed" -ne 0 ]; then report failed "pstack update failed (exit $status)"
+  else report changed "updated pstack from rolling main ($version)"
+  fi
+}
+
+resolve_destination() {
+  local ancestor="$1" suffix='' resolved
+  while ! present "$ancestor"; do
+    suffix="/${ancestor##*/}$suffix"
+    ancestor="${ancestor%/*}"
+    [ -n "$ancestor" ] || ancestor=/
+  done
+  resolved="$(resolve "$ancestor")" || return 1
+  printf '%s%s\n' "${resolved%/}" "$suffix"
+}
+
+ported_destination() {
+  local destination hub
+  destination="$(resolve_destination "$1")" && hub="$(resolve_destination "$HOME/.agents/skills")" || {
+    report failed "cannot resolve ported destination $1; left untouched"; return 1;
+  }
+  case "$destination" in
+    "$hub" | "$hub"/*)
+      report failed "$1 resolves into the skills hub $hub; left untouched"
+      return 1 ;;
+  esac
+}
+
+ported_into() {
+  local directory="$1" name link target old
+  ported_destination "$directory" || return 1
+  for name in grill-me domain-modeling codebase-design improve-codebase-architecture wizard; do
+    target="$ported_source/$name"; link="$directory/$name"
+    if [ ! -f "$target/SKILL.md" ]; then report failed "missing $target/SKILL.md"; continue; fi
+    if [ -L "$link" ] && [ "$(readlink "$link")" != "$target" ] && ! same_folder "$link" "$target"; then
+      old="$(readlink "$link")"
+      case "$old" in
+        "$HOME/.cursor/plugins/local/t3-pstack-science/skills/$name" | "$HOME/.claude/plugins/cache/t3-pstack-science/t3-pstack-science/"*/skills/"$name" | "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache/t3-pstack-science/t3-pstack-science/"*/skills/"$name")
+          change "repoint $link to $target" ln -sfn "$target" "$link"
+          continue ;;
+      esac
+    fi
+    sync_link "$target" "$link"
+  done
+}
+
+step_ported_skills() {
+  local ported_source profile directory destinations=() profiles=()
+  if [ -d "$HOME/.pi/agent" ] || command -v pi >/dev/null 2>&1; then destinations+=("$HOME/.pi/agent/skills"); fi
+  if [ -d "$HOME/.config/opencode" ] || command -v opencode >/dev/null 2>&1; then destinations+=("$HOME/.config/opencode/skills"); fi
+  if command -v agy >/dev/null 2>&1 || [ -d "$HOME/.gemini/antigravity-cli" ] || [ -d "$HOME/.t3/userdata/providers/antigravity" ]; then
+    destinations+=("$HOME/.gemini/antigravity-cli/skills")
+  fi
+  if command -v gemini >/dev/null 2>&1; then destinations+=("$HOME/.gemini/skills"); fi
+  for profile in "$HOME"/.t3/userdata/providers/antigravity/*/antigravity-cli; do
+    [ -d "$profile" ] || continue
+    if [ -d "$profile/skills" ] && [ ! -L "$profile/skills" ]; then destinations+=("$profile/skills")
+    else profiles+=("$profile/skills")
+    fi
+  done
+  if [ "${#destinations[@]}" -eq 0 ] && [ "${#profiles[@]}" -eq 0 ]; then
+    report skipped 'no destination tools for ported skills'; return
+  fi
+  ported_source="$(pstack_skills)" || { report failed 'no pstack skills source; install pstack first'; return 1; }
+  for directory in ${destinations[@]+"${destinations[@]}"}; do ported_into "$directory"; done
+  for directory in ${profiles[@]+"${profiles[@]}"}; do
+    if ported_destination "$directory"; then sync_link "$HOME/.gemini/antigravity-cli/skills" "$directory"; fi
+  done
+}
+
+oracle_version() {
+  local version
+  version="$("$1" --version 2>/dev/null)" || return 1
+  [[ "$version" =~ (^|[^0-9.])${ORACLE_VERSION//./\.}([^0-9.]|$) ]]
+}
+
+write_oracle_launcher() {
+  mkdir -p "$(dirname "$1")" && printf '%s\n' "$2" >"$1" && chmod +x "$1"
+}
+
+sync_oracle_launcher() {
+  local link="$1" script="$2" content marker='# agent-skills sync Oracle launcher'
+  if present "$link"; then
+    if [ -L "$link" ] || [ ! -f "$link" ] || ! grep -Fxq "$marker" "$link"; then
+      report failed "left $link untouched because it is not a launcher sync owns"
+      return 1
+    fi
+  fi
+  content="$(printf '#!/bin/bash\n%s\nexec %q %q "$@"\n' "$marker" "$fallback_node" "$script")"
+  if [ -x "$link" ] && [ "$(cat "$link")" = "$content" ]; then return; fi
+  change "write Oracle launcher $link" write_oracle_launcher "$link" "$content"
+}
+
+step_oracle() {
+  local executable prefix expected
+  if [ ! -d "$HOME/.oracle/browser-profile" ]; then
+    echo '  note: log in once per machine with oracle --engine browser --browser-manual-login --browser-keep-browser -p "HI"'
+  fi
+  if [ "$node_ready" -ne 1 ]; then report skipped 'Oracle needs Node 24+'; return; fi
+  executable="$(command -v oracle)" || executable=''
+  if [ -n "$executable" ] && oracle_version "$executable"; then
+    if [ -z "$fallback_node" ]; then detail="Oracle $ORACLE_VERSION at $executable"; return; fi
+  else
+    change "install @steipete/oracle@$ORACLE_VERSION globally" npm install -g "@steipete/oracle@$ORACLE_VERSION" || return 1
+    if [ "$mode" = check ] && [ -z "$fallback_node" ]; then return; fi
+  fi
+  prefix="$(npm prefix -g)" || { report failed 'cannot resolve npm global prefix'; return 1; }
+  if [ -n "$fallback_node" ]; then
+    sync_oracle_launcher "$HOME/.local/bin/oracle" "$prefix/lib/node_modules/@steipete/oracle/dist/bin/oracle-cli.js"
+    sync_oracle_launcher "$HOME/.local/bin/oracle-mcp" "$prefix/lib/node_modules/@steipete/oracle/dist/bin/oracle-mcp.js"
+    case ":$original_path:" in
+      *":$HOME/.local/bin:"* | *":$HOME/.local/bin/:"*) ;;
+      *) report failed "$HOME/.local/bin is not on the original PATH; add export PATH=\"\$HOME/.local/bin:\$PATH\" to your shell configuration" ;;
+    esac
+  fi
+  [ "$mode" = check ] && return 0
+  hash -r
+  executable="$(PATH="$original_path" command -v oracle)" || executable=''
+  expected="$prefix/bin/oracle"
+  if [ -n "$executable" ] && PATH="$original_path" oracle_version "$executable"; then return; fi
+  if [ -n "$executable" ] && [ "$executable" != "$expected" ]; then
+    report failed "Oracle at $executable shadows npm global bin $expected and fails the pinned version check; left untouched"
+  else report failed "Oracle at ${executable:-$expected} failed the pinned version check on the original PATH after installation"
+  fi
+}
+
+run_step() {
+  local name="$1" function="$2" result='already right' detail=''
+  printf '\n%s\n' "$name"
+  if ! "$function" && [ "$result" != failed ]; then report failed "$name could not complete"; fi
+  names+=("$name"); results+=("$result"); details+=("$detail")
+  if [ "$result" = failed ]; then failed=1; fi
+  if [ "$result" = 'would change' ]; then pending=1; fi
+}
+
+run_step node step_node
+run_step repo step_repo
+run_step ppt-master step_ppt_master
+run_step skills step_skills
+run_step 'model sheet' step_model_sheet
+run_step pstack step_pstack
+run_step 'ported skills' step_ported_skills
+run_step oracle step_oracle
+printf '\nSummary\n'
+for ((i=0; i<${#names[@]}; i++)); do
+  printf '%s - %s%s\n' "${names[i]}" "${results[i]}" "${details[i]:+ - ${details[i]}}"
+done
+if [ "$failed" -ne 0 ] || [ "$pending" -ne 0 ]; then exit 1; fi

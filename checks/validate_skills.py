@@ -41,6 +41,13 @@ def prose_lines(text):
 def main(root):
     root = pathlib.Path(root)
     errors, warnings = [], []
+    config = root / "sync.conf"
+    pins = config.read_text() if config.exists() else ""
+    vendored = set()
+    if (re.search(r"^ORACLE_SKILL_REPO=steipete/oracle$", pins, re.M)
+            and re.search(r"^ORACLE_SKILL_COMMIT=[0-9a-f]{40}$", pins, re.M)
+            and (root / "skills/oracle/LICENSE").is_file()):
+        vendored.add(root / "skills/oracle")
     markdown = sorted(root.rglob("*.md"))
     for skill_md in sorted(root.glob("skills/*/SKILL.md")):
         fields = frontmatter(skill_md.read_text())
@@ -60,6 +67,9 @@ def main(root):
             errors.append(f"{skill_md}: fields outside the spec {sorted(unknown)}")
         print(f"ok frontmatter {skill_md.relative_to(root)} name={name} description={len(description)} chars")
     for path in markdown:
+        if any(directory in path.parents for directory in vendored):
+            print(f"ok verbatim vendored file {path.relative_to(root)} (house style skipped)")
+            continue
         text = path.read_text()
         for dash in ("—", "–"):
             if dash in text:
