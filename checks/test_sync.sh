@@ -41,7 +41,8 @@ case "$tool" in
     if [ "${FAKE_NPX_FAIL:-0}" = 1 ]; then echo 'npx failed' >&2; exit 1; fi
     if [ "${FAKE_NPX_MALFORMED:-0}" = 1 ]; then echo '{bad json'; exit; fi
     if [ "$3" = update ] && [ "${FAKE_UPDATE_FAIL:-0}" = 1 ]; then exit 1; fi
-    version="${2##*#v}"
+    version="${FAKE_PSTACK_LATEST:-2.0.0-science.5}"
+    case "$2" in *#v*) version="${2##*#v}" ;; esac
     if [ "$3" = update ]; then
       mkdir -p "$HOME/.fixture"
       echo "$version" >"$HOME/.fixture/pstack-version"
@@ -153,7 +154,7 @@ source_skills() {
 
 # shellcheck source=sync.conf
 source "$repo/sync.conf"
-pin="${PSTACK_TAG#v}"
+pin=2.0.0-science.5
 
 fresh_home
 tools_present
@@ -178,7 +179,7 @@ done
 expect 'T3 Antigravity profiles share the ported folder' link_is "$H/.t3/userdata/providers/antigravity/profile/antigravity-cli/skills" "$H/.gemini/antigravity-cli/skills"
 expect 'ported skills never enter the hub' absent "$H/.agents/skills/wizard"
 expect 'npm installs the exact Oracle pin' grep -qx "npm install -g @steipete/oracle@$ORACLE_VERSION" "$log"
-expect 'pstack update gets the pin and detected flags' grep -qx "npx -y github:huankoh/t3-pstack-science#$PSTACK_TAG update --cursor --muse --json" "$log"
+expect 'pstack update gets the rolling channel and detected flags' grep -qx "npx -y github:huankoh/t3-pstack-science update --cursor --muse --json" "$log"
 expect 'missing venv is reported' grep -q 'needs its skill venv' "$output"
 expect 'missing browser profile prints the login command' grep -q 'oracle --engine browser --browser-manual-login --browser-keep-browser -p "HI"' "$output"
 : >"$log"
@@ -252,6 +253,14 @@ run
 expect 'matching versions succeed despite the expected warning' [ "$status" = 0 ]
 expect 'matching pstack version runs no update' bash -c '! grep -q "npx .* update " "$1"' _ "$log"
 expect 'matching Oracle version runs no npm' bash -c '! grep -q "^npm " "$1"' _ "$log"
+
+fresh_home
+source_skills 2.1.0
+extra=(FAKE_PSTACK_LATEST=2.1.0 FAKE_PSTACK_VERSION=2.1.0)
+run
+expect 'a newer rolling release passes doctor without reinstalling' [ "$status" = 0 ]
+expect 'a newer rolling release runs no updater' bash -c '! grep -q "npx .* update " "$1"' _ "$log"
+expect 'doctor follows the marketplaces rolling channel' grep -qx 'npx -y github:huankoh/t3-pstack-science doctor --muse --json' "$log"
 
 fresh_home
 mkdir -p "$H/.fixture"
@@ -362,7 +371,7 @@ expect 'an unrelated ported-skill link stays untouched' link_is "$H/.pi/agent/sk
 fresh_home
 rm "$case_dir/bin/muse"
 run
-expect 'pstack omits flags for absent optional tools' grep -qx "npx -y github:huankoh/t3-pstack-science#$PSTACK_TAG update --json" "$log"
+expect 'pstack omits flags for absent optional tools' grep -qx "npx -y github:huankoh/t3-pstack-science update --json" "$log"
 
 fresh_home
 mkdir -p "$H/.config/t3-pstack-science" "$H/old-sheet"

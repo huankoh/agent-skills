@@ -255,35 +255,36 @@ pstack_report() {
     let input = "";
     for await (const chunk of process.stdin) input += chunk;
     const report = JSON.parse(input);
-    if (report.version !== process.argv[1] || !Array.isArray(report.homes) ||
+    if (typeof report.version !== "string" || !report.version || !Array.isArray(report.homes) ||
         !report.homes.length || !Number.isInteger(report.failed)) process.exit(2);
     const checks = [...report.homes.flatMap(home => home.checks), ...(report.sheet?.checks ?? [])];
     if (checks.some(check => typeof check?.ok !== "boolean")) process.exit(2);
     for (const check of checks.filter(check => !check.ok))
       console.error(`${check.warn ? "warning" : "needs update"}: ${check.name}: ${check.detail}`);
+    console.log(report.version);
     process.exit(report.failed || checks.some(check => !check.ok && !check.warn) ? 1 : 0);
     } catch (error) { console.error(error.message); process.exit(2); }
-  ' "${PSTACK_TAG#v}"
+  '
 }
 
 step_pstack() {
-  local output status=0 parsed=0 flags=()
+  local output version status=0 parsed=0 flags=()
   if [ "$node_ready" -ne 1 ]; then report skipped 'pstack needs Node 24+ for this sync'; return; fi
   if [ -d "$HOME/.cursor" ]; then flags+=(--cursor); fi
   if command -v muse >/dev/null 2>&1; then flags+=(--muse); fi
-  output="$(npx -y "github:huankoh/t3-pstack-science#$PSTACK_TAG" doctor ${flags[@]+"${flags[@]}"} --json)" || status=$?
-  printf '%s' "$output" | pstack_report || parsed=$?
+  output="$(npx -y github:huankoh/t3-pstack-science doctor ${flags[@]+"${flags[@]}"} --json)" || status=$?
+  version="$(printf '%s' "$output" | pstack_report)" || parsed=$?
   if [ "$parsed" -gt 1 ] || [ "$status" -gt 1 ] || { [ "$status" -ne 0 ] && [ "$parsed" -eq 0 ]; }; then
     report failed "pstack doctor failed or returned invalid JSON (exit $status)"
     return 1
   fi
-  if [ "$parsed" -eq 0 ]; then detail="every pstack home passes at ${PSTACK_TAG#v}"; return; fi
-  if [ "$mode" = check ]; then report 'would change' "update pstack to $PSTACK_TAG"; return; fi
+  if [ "$parsed" -eq 0 ]; then detail="every pstack home passes at $version on rolling main"; return; fi
+  if [ "$mode" = check ]; then report 'would change' "update pstack from rolling main ($version)"; return; fi
   status=0; parsed=0
-  output="$(npx -y "github:huankoh/t3-pstack-science#$PSTACK_TAG" update ${flags[@]+"${flags[@]}"} --json)" || status=$?
-  printf '%s' "$output" | pstack_report || parsed=$?
+  output="$(npx -y github:huankoh/t3-pstack-science update ${flags[@]+"${flags[@]}"} --json)" || status=$?
+  version="$(printf '%s' "$output" | pstack_report)" || parsed=$?
   if [ "$status" -ne 0 ] || [ "$parsed" -ne 0 ]; then report failed "pstack update failed (exit $status)"
-  else report changed "updated pstack to $PSTACK_TAG"
+  else report changed "updated pstack from rolling main ($version)"
   fi
 }
 

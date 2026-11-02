@@ -6,7 +6,7 @@ Run the same command on each machine after changing the repo.
 The repo manages these six pieces of state.
 
 - The `coding-standards`, `prune-tests`, and vendored `oracle` skills in [skills/](skills/).
-- The pinned `huankoh/t3-pstack-science` plugin through its own installer.
+- The rolling `huankoh/t3-pstack-science` plugin through its own installer.
 - Five pstack skills for tools that do not load the plugin, `grill-me`, `domain-modeling`, `codebase-design`, `improve-codebase-architecture`, and `wizard`.
 - The shared pstack model sheet in [config/models.md](config/models.md).
 - The private `huankoh/ppt-master-white-sage` clone and its skill link.
@@ -37,6 +37,8 @@ Grok Build gets the same links when `~/.grok` exists.
 Antigravity's `~/.gemini/config/skills` points to the hub.
 Codex, Cursor, Muse Code, OpenCode, and Pi read the hub themselves.
 
+Pstack follows the latest release on `main`, matching its Claude Code and Codex marketplaces.
+`sync` runs `npx -y github:huankoh/t3-pstack-science doctor` and uses the same rolling channel for `update`.
 Pstack's installer manages its plugin homes, including Cursor when `~/.cursor` exists and Muse when `muse` is on PATH.
 The five ported skills get separate links for detected Pi, OpenCode, Gemini CLI, Antigravity CLI, and T3 Antigravity profiles.
 Their source is Cursor's local pstack copy when available, then the highest-versioned default Claude Code cache, then the cache under `CLAUDE_CONFIG_DIR`.
@@ -66,7 +68,8 @@ It leaves the pstack plugin, ported links, model sheet, presentation clone, and 
 ## Change a pin
 
 Edit [sync.conf](sync.conf), review the diff, and commit the change.
-`PSTACK_TAG` selects the pstack release, and `ORACLE_VERSION` selects the npm CLI release.
+`ORACLE_VERSION` selects the npm CLI release.
+Pstack follows rolling `main` and has no tag pin.
 `PPT_MASTER_REPO` selects the private presentation repository.
 Run `sync` on every machine after the change lands on `main`.
 
