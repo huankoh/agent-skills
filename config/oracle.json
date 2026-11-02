@@ -3,6 +3,8 @@
   "model": "gpt-6-pro",
   "browser": {
     "manualLogin": true,
-    "keepBrowser": true
+    "keepBrowser": true,
+    "hideWindow": true,
+    "noFocus": true
   }
 }

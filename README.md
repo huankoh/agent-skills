@@ -124,6 +124,10 @@ If an old Oracle shim shadows npm's global binary and fails the version check, `
 A run can still pass `--model` to override this default.
 "Always the latest model" requires a manual pin bump in this file.
 Oracle maps each ChatGPT picker label explicitly, so a new model also needs a newer Oracle release.
+It also runs Chrome off-screen and never brings it to the front, so a consult does not interrupt you.
+On macOS the window stays hidden; on Linux `hideWindow` has no effect and only `noFocus` applies.
+When ChatGPT asks you to sign in again, Oracle moves the window on screen and to the front by itself.
+T3's built-in browser cannot host Oracle, because T3 exposes no Chrome DevTools port for it to attach to.
 
 Oracle's browser engine uses your ChatGPT plan.
 API mode bills per call.
