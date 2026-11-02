@@ -8,13 +8,13 @@ The repo manages these six pieces of state.
 - The `coding-standards`, `prune-tests`, and vendored `oracle` skills in [skills/](skills/).
 - The rolling `huankoh/t3-pstack-science` plugin through its own installer.
 - Five pstack skills for tools that do not load the plugin, `grill-me`, `domain-modeling`, `codebase-design`, `improve-codebase-architecture`, and `wizard`.
-- The shared pstack model sheet in [config/models.md](config/models.md).
+- The shared pstack model sheet in [config/models.md](config/models.md) and Oracle defaults in [config/oracle.json](config/oracle.json).
 - The private `huankoh/ppt-master-white-sage` clone and its skill link.
 - The pinned `@steipete/oracle` CLI from npm.
 
 Your other skills in `~/.agents/skills` stay in place.
 Conflicting files, folders, and unrelated links stay untouched and appear as failures in the summary.
-A differing model sheet is the exception and gets a timestamped backup before the repo sheet takes its place.
+Differing managed config files are the exception and get timestamped backups before links to the repo copies take their place.
 
 ## Set up a machine
 
@@ -68,7 +68,7 @@ Git fetch can update `.git`, and `npx` and doctor can refresh their own caches.
 
 To add your own skill, put it in `~/.agents/skills` and rerun `sync` so Claude Code gets its link.
 Use `install.sh --remove` only to remove the links that installer owns.
-It leaves the pstack plugin, ported links, model sheet, presentation clone, and Oracle CLI in place.
+It leaves the pstack plugin, ported links, config links, presentation clone, and Oracle CLI in place.
 
 ## Change a pin
 
@@ -78,20 +78,21 @@ Pstack follows rolling `main` and has no tag pin.
 `PPT_MASTER_REPO` selects the private presentation repository.
 Run `sync` on every machine after the change lands on `main`.
 
-## Edit the model sheet
+## Edit the shared configs
 
-Edit [config/models.md](config/models.md), commit the change, and run `sync` on each machine.
-The machine sheet at `${XDG_CONFIG_HOME:-$HOME/.config}/t3-pstack-science/models.md` is a symlink into the clone.
-An edit through that machine path also appears as a git diff in the repo.
+Edit [config/models.md](config/models.md) or [config/oracle.json](config/oracle.json), commit the change, and run `sync` on each machine.
+The `configs` step links the model sheet at `${XDG_CONFIG_HOME:-$HOME/.config}/t3-pstack-science/models.md` and Oracle config at `~/.oracle/config.json` into the clone.
+An edit through either machine path also appears as a git diff in the repo.
 
 An identical regular file becomes a link without a backup.
-A differing file or a link elsewhere moves to `models.md.bak-<UTC yyyymmddThhmmssZ>` beside the sheet.
+A differing file or a link elsewhere moves to `<filename>.bak-<UTC yyyymmddThhmmssZ>` beside the config.
 `sync` prints the backup path and a `diff` command so you can fold local choices into the repo.
 If a backup name already exists, a numeric suffix preserves both copies.
 
 When the installed pstack sheet validator exists, `sync` uses its exported checker to validate the repo sheet offline.
 The checker validates syntax and pstack role rules without requiring a live T3 provider catalog.
 Pstack doctor checks the sheet again during the plugin step.
+When Node is ready, `sync` also parses the repo Oracle config as strict JSON.
 
 ## Update the vendored Oracle skill
 
@@ -118,6 +119,11 @@ oracle --engine browser --browser-manual-login --browser-keep-browser -p "HI"
 An existing launcher is replaced only when it is a regular file with the marker `# agent-skills sync Oracle launcher`.
 During nvm fallback, other files and links at those launcher paths stay untouched and make the Oracle step fail.
 If an old Oracle shim shadows npm's global binary and fails the version check, `sync` reports the shim's path for you to fix.
+
+[config/oracle.json](config/oracle.json) sets the default to `gpt-6-pro`, ChatGPT's GPT-6 with Pro thinking, through the browser engine.
+A run can still pass `--model` to override this default.
+"Always the latest model" requires a manual pin bump in this file.
+Oracle maps each ChatGPT picker label explicitly, so a new model also needs a newer Oracle release.
 
 Oracle's browser engine uses your ChatGPT plan.
 API mode bills per call.
