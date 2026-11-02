@@ -305,8 +305,32 @@ step_pstack() {
   fi
 }
 
+resolve_destination() {
+  local ancestor="$1" suffix='' resolved
+  while ! present "$ancestor"; do
+    suffix="/${ancestor##*/}$suffix"
+    ancestor="${ancestor%/*}"
+    [ -n "$ancestor" ] || ancestor=/
+  done
+  resolved="$(resolve "$ancestor")" || return 1
+  printf '%s%s\n' "${resolved%/}" "$suffix"
+}
+
+ported_destination() {
+  local destination hub
+  destination="$(resolve_destination "$1")" && hub="$(resolve_destination "$HOME/.agents/skills")" || {
+    report failed "cannot resolve ported destination $1; left untouched"; return 1;
+  }
+  case "$destination" in
+    "$hub" | "$hub"/*)
+      report failed "$1 resolves into the skills hub $hub; left untouched"
+      return 1 ;;
+  esac
+}
+
 ported_into() {
   local directory="$1" name link target old
+  ported_destination "$directory" || return 1
   for name in grill-me domain-modeling codebase-design improve-codebase-architecture wizard; do
     target="$ported_source/$name"; link="$directory/$name"
     if [ ! -f "$target/SKILL.md" ]; then report failed "missing $target/SKILL.md"; continue; fi
@@ -341,7 +365,9 @@ step_ported_skills() {
   fi
   ported_source="$(pstack_skills)" || { report failed 'no pstack skills source; install pstack first'; return 1; }
   for directory in ${destinations[@]+"${destinations[@]}"}; do ported_into "$directory"; done
-  for directory in ${profiles[@]+"${profiles[@]}"}; do sync_link "$HOME/.gemini/antigravity-cli/skills" "$directory"; done
+  for directory in ${profiles[@]+"${profiles[@]}"}; do
+    if ported_destination "$directory"; then sync_link "$HOME/.gemini/antigravity-cli/skills" "$directory"; fi
+  done
 }
 
 oracle_version() {

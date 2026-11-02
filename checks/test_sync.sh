@@ -395,6 +395,37 @@ run
 expect 'no destination tool permits the ported step to skip' grep -q '^ported skills - skipped - no destination tools' "$output"
 
 fresh_home
+mkdir -p "$H/.agents/skills/nested" "$H/.pi/agent" "$H/.config/opencode"
+ln -s "$H/.agents/skills" "$H/.pi/agent/skills"
+ln -s "$H/.agents/skills/nested" "$H/.config/opencode/skills"
+source_skills
+run --check
+expect 'check rejects ported folders linked into the hub' grep -q '^ported skills - failed - .*resolves into the skills hub' "$output"
+expect 'check puts no ported skill in the hub' absent "$H/.agents/skills/wizard"
+run
+expect 'ported folders linked into the hub make sync fail' [ "$status" = 1 ]
+expect 'a direct hub alias receives no ported skill' absent "$H/.agents/skills/wizard"
+expect 'a hub descendant receives no ported skill' absent "$H/.agents/skills/nested/wizard"
+expect 'the direct hub alias remains untouched' link_is "$H/.pi/agent/skills" "$H/.agents/skills"
+
+fresh_home
+mkdir -p "$H/.agents/skills" "$H/.pi" "$H/.t3/userdata/providers/antigravity/profile"
+ln -s "$H/.agents/skills" "$H/.pi/agent"
+ln -s "$H/.agents/skills" "$H/.t3/userdata/providers/antigravity/profile/antigravity-cli"
+run
+expect 'a missing folder under a hub alias makes sync fail' [ "$status" = 1 ]
+expect 'a linked ancestor never receives a new ported folder' absent "$H/.agents/skills/skills"
+expect 'a linked T3 profile ancestor is reported' grep -q 'antigravity/profile/antigravity-cli/skills resolves into the skills hub' "$output"
+
+fresh_home
+mkdir -p "$H/shared-agents/skills/nested" "$H/.pi/agent"
+ln -s "$H/shared-agents" "$H/.agents"
+ln -s "$H/shared-agents/skills/nested" "$H/.pi/agent/skills"
+run
+expect 'hub protection resolves the hub itself through aliases' [ "$status" = 1 ]
+expect 'a physical hub descendant receives no ported skill' absent "$H/shared-agents/skills/nested/wizard"
+
+fresh_home
 mkdir -p "$H/.pi/agent/skills" "$H/personal/wizard"
 echo keep >"$H/personal/wizard/SKILL.md"
 ln -s "$H/personal/wizard" "$H/.pi/agent/skills/wizard"
