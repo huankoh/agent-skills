@@ -61,7 +61,20 @@ case "$tool" in
     exit "$failed"
     ;;
   npm)
-    if [ "$1" = prefix ]; then echo "$HOME/npm"; exit; fi
+    prefix="$HOME/npm"
+    if [ "${FAKE_NVM_ORACLE:-0}" = 1 ]; then prefix="$HOME/.nvm/versions/node/v24.22.0"; fi
+    if [ "$1" = prefix ]; then echo "$prefix"; exit; fi
+    if [ "${FAKE_NVM_ORACLE:-0}" = 1 ]; then
+      mkdir -p "$prefix/bin" "$prefix/lib/node_modules/@steipete/oracle/dist/bin"
+      for command in oracle oracle-mcp; do
+        entry=oracle-cli.js
+        if [ "$command" = oracle-mcp ]; then entry=oracle-mcp.js; fi
+        script="$prefix/lib/node_modules/@steipete/oracle/dist/bin/$entry"
+        printf '#!/usr/bin/env node\nif (process.env.FAKE_RUNNING_NODE24 !== "24.22.0") process.exit(9);\nif (process.argv[2] === "--version") console.log("oracle %s");\nelse console.log(JSON.stringify(process.argv.slice(2)));\n' "${3##*@}" >"$script"
+        chmod +x "$script"
+        ln -sf "$script" "$prefix/bin/$command"
+      done
+    fi
     mkdir -p "$HOME/.fixture"
     echo "${3##*@}" >"$HOME/.fixture/oracle-version"
     ;;
@@ -111,11 +124,12 @@ fresh_home() {
   output="$case_dir/output"
   : >"$log"
   extra=()
+  run_path="$case_dir/bin:$H/.local/bin:/usr/bin:/bin"
 }
 
 run() {
   status=0
-  env HOME="$H" XDG_CONFIG_HOME="$H/.config" PATH="$case_dir/bin:/usr/bin:/bin" \
+  env HOME="$H" XDG_CONFIG_HOME="$H/.config" PATH="$run_path" \
     REAL_NODE="$real_node" TEST_LOG="$log" PPT_REMOTE="$suite/ppt.git" \
     ${extra[@]+"${extra[@]}"} "$BASH" "$clone/sync" "$@" >"$output" 2>&1 || status=$?
 }
@@ -162,6 +176,23 @@ source_skills() {
   done
 }
 
+setup_nvm_oracle() {
+  local version
+  extra=(FAKE_NODE_VERSION=v22.0.0 FAKE_NVM_ORACLE=1)
+  rm "$case_dir/bin/oracle"
+  for version in 24.2.0 24.22.0; do
+    mkdir -p "$H/.nvm/versions/node/v$version/bin"
+    printf '#!/bin/bash\nif [ "${1:-}" = --version ]; then echo v%s; else export FAKE_RUNNING_NODE24=%s; exec "%s" "$@"; fi\n' "$version" "$version" "$real_node" >"$H/.nvm/versions/node/v$version/bin/node"
+    chmod +x "$H/.nvm/versions/node/v$version/bin/node"
+  done
+}
+
+oracle_command() {
+  command_status=0
+  env HOME="$H" PATH="$run_path" REAL_NODE="$real_node" TEST_LOG="$log" FAKE_NODE_VERSION=v22.0.0 \
+    "$BASH" -c 'exec "$@"' _ "$@" >"$case_dir/oracle-output" 2>&1 || command_status=$?
+}
+
 # shellcheck source=sync.conf
 source "$repo/sync.conf"
 pin=2.0.0-science.5
@@ -188,6 +219,8 @@ for target in "$H/.pi/agent/skills" "$H/.config/opencode/skills" "$H/.gemini/ski
 done
 expect 'T3 Antigravity profiles share the ported folder' link_is "$H/.t3/userdata/providers/antigravity/profile/antigravity-cli/skills" "$H/.gemini/antigravity-cli/skills"
 expect 'ported skills never enter the hub' absent "$H/.agents/skills/wizard"
+expect 'a modern PATH Node needs no Oracle launcher' absent "$H/.local/bin/oracle"
+expect 'a modern PATH Node needs no MCP launcher' absent "$H/.local/bin/oracle-mcp"
 expect 'npm installs the exact Oracle pin' grep -qx "npm install -g @steipete/oracle@$ORACLE_VERSION" "$log"
 expect 'pstack update gets the rolling channel and detected flags' grep -qx "npx -y github:huankoh/t3-pstack-science update --cursor --muse --json" "$log"
 expect 'missing venv is reported' grep -q 'needs its skill venv' "$output"
@@ -348,15 +381,92 @@ expect 'stale Oracle shim is reported by path' grep -q "Oracle at $case_dir/bin/
 expect 'stale Oracle shim stays untouched' cmp -s "$suite/fake" "$case_dir/bin/oracle"
 
 fresh_home
-extra=(FAKE_NODE_VERSION=v22.0.0)
-mkdir -p "$H/.nvm/versions/node/v24.2.0/bin" "$H/.nvm/versions/node/v24.22.0/bin"
-for version in 24.2.0 24.22.0; do
-  printf '#!/bin/bash\nif [ "${1:-}" = --version ]; then echo v%s; else exec "%s" "$@"; fi\n' "$version" "$real_node" >"$H/.nvm/versions/node/v$version/bin/node"
-  chmod +x "$H/.nvm/versions/node/v$version/bin/node"
-done
+H="$case_dir/home with spaces"
+mkdir -p "$H"
+run_path="$case_dir/bin:$H/.local/bin:/usr/bin:/bin"
+setup_nvm_oracle
 run
 expect 'an older PATH Node falls back to nvm' [ "$status" = 0 ]
 expect 'nvm selection uses numeric version ordering' grep -q '^node - already right - using .*v24.22.0/bin' "$output"
+expect 'the fallback creates an executable Oracle launcher' test -x "$H/.local/bin/oracle"
+expect 'the fallback creates an executable MCP launcher' test -x "$H/.local/bin/oracle-mcp"
+oracle_command oracle --version
+expect 'Oracle runs from the original PATH with Node 22' [ "$command_status" = 0 ]
+expect 'the original shell sees the pinned Oracle version' grep -qx "oracle $ORACLE_VERSION" "$case_dir/oracle-output"
+oracle_command oracle 'prompt with spaces' '--flag=$HOME'
+expect 'the Oracle launcher preserves argument boundaries' grep -Fxq '["prompt with spaces","--flag=$HOME"]' "$case_dir/oracle-output"
+oracle_command oracle-mcp 'MCP argument' '--flag=$HOME'
+expect 'the MCP launcher preserves argument boundaries' grep -Fxq '["MCP argument","--flag=$HOME"]' "$case_dir/oracle-output"
+before="$(snapshot)"
+: >"$log"
+run
+expect 'a second nvm sync succeeds' [ "$status" = 0 ]
+expect 'a second nvm sync installs nothing' no_installers
+expect 'a second nvm sync leaves its launchers unchanged' [ "$(snapshot)" = "$before" ]
+mkdir -p "$H/.local/bin"
+printf '#!/bin/bash\n# agent-skills sync Oracle launcher\nexit 1\n' >"$H/.local/bin/oracle"
+run
+oracle_command oracle --version
+expect 'an owned stale launcher is repaired' [ "$command_status" = 0 ]
+expect 'an owned stale launcher needs no reinstall' no_installers
+
+fresh_home
+setup_nvm_oracle
+before="$(snapshot)"
+run --check
+expect 'nvm check creates no launcher or other home file' [ "$(snapshot)" = "$before" ]
+expect 'nvm check runs no installer' no_installers
+expect 'nvm check reports its proposed Oracle launcher' grep -q 'would change - .*launcher .*\.local/bin/oracle' "$output"
+
+fresh_home
+setup_nvm_oracle
+mkdir -p "$H/.local/bin"
+printf '#!/bin/bash\necho oracle 0.0.1\n' >"$H/.local/bin/oracle"
+printf 'foreign MCP file\n' >"$H/.local/bin/oracle-mcp"
+chmod +x "$H/.local/bin/oracle"
+before="$(cksum "$H/.local/bin/oracle" "$H/.local/bin/oracle-mcp")"
+run
+expect 'foreign launchers make nvm sync fail' [ "$status" = 1 ]
+expect 'foreign launchers keep their exact bytes' [ "$(cksum "$H/.local/bin/oracle" "$H/.local/bin/oracle-mcp")" = "$before" ]
+expect 'the foreign Oracle launcher is reported' grep -q 'left .*\.local/bin/oracle untouched' "$output"
+expect 'the foreign MCP launcher is reported' grep -q 'left .*\.local/bin/oracle-mcp untouched' "$output"
+
+fresh_home
+setup_nvm_oracle
+mkdir -p "$H/.local/bin"
+printf '#!/bin/bash\n# agent-skills sync Oracle launcher\nexit 1\n' >"$H/personal-oracle"
+ln -s "$H/personal-oracle" "$H/.local/bin/oracle"
+before="$(cksum "$H/personal-oracle")"
+run
+expect 'a linked launcher remains a conflict even with the marker' [ "$status" = 1 ]
+expect 'a foreign launcher link is preserved' link_is "$H/.local/bin/oracle" "$H/personal-oracle"
+expect 'a foreign launcher link target is preserved' [ "$(cksum "$H/personal-oracle")" = "$before" ]
+
+fresh_home
+setup_nvm_oracle
+run_path="$case_dir/bin:/usr/bin:/bin"
+run
+expect 'nvm sync fails when local bin is absent from the original PATH' [ "$status" = 1 ]
+expect 'the missing local bin diagnosis includes the shell line' grep -Fq 'export PATH="$HOME/.local/bin:$PATH"' "$output"
+
+fresh_home
+setup_nvm_oracle
+cp "$suite/fake" "$case_dir/bin/oracle"
+extra+=(FAKE_ORACLE_BROKEN=1)
+run
+expect 'a stale command on the original PATH makes nvm sync fail' [ "$status" = 1 ]
+expect 'verification reports the shadowing command from the original PATH' grep -Fq "Oracle at $case_dir/bin/oracle shadows npm global bin" "$output"
+
+fresh_home
+setup_nvm_oracle
+printf '\n# restart under the original PATH\n' >>"$suite/source/sync"
+git -C "$suite/source" add sync
+git -C "$suite/source" commit -qm 'Exercise nvm after a sync restart'
+run
+expect 'a self update under nvm restarts once' [ "$(grep -c 'sync updated itself; restarting once' "$output")" = 1 ]
+expect 'a self update under nvm succeeds' [ "$status" = 0 ]
+oracle_command oracle --version
+expect 'a self update preserves fallback launcher setup' [ "$command_status" = 0 ]
 
 fresh_home
 extra=(FAKE_NODE_VERSION=v22.0.0)

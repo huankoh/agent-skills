@@ -18,6 +18,8 @@ details=()
 failed=0
 pending=0
 node_ready=0
+original_path="$PATH"
+fallback_node=''
 
 report() {
   local state="$1" message="$2"
@@ -115,6 +117,7 @@ step_node() {
     fi
   done
   if [ -n "$newest" ]; then
+    fallback_node="$newest/node"
     export PATH="$newest:$PATH"
     node_ready=1
     detail="using $newest for this run"
@@ -159,6 +162,7 @@ step_repo() {
   if [ "$mode" = sync ] && [ "$before" != "$after" ] && [ "${AGENT_SKILLS_SYNC_REEXEC:-0}" != 1 ]; then
     echo '  sync updated itself; restarting once'
     export AGENT_SKILLS_SYNC_REEXEC=1
+    export PATH="$original_path"
     exec "$BASH" "$repo/sync" ${args[@]+"${args[@]}"}
   fi
   # A pull can change pins without changing this script.
@@ -380,6 +384,23 @@ oracle_version() {
   [[ "$version" =~ (^|[^0-9.])${ORACLE_VERSION//./\.}([^0-9.]|$) ]]
 }
 
+write_oracle_launcher() {
+  mkdir -p "$(dirname "$1")" && printf '%s\n' "$2" >"$1" && chmod +x "$1"
+}
+
+sync_oracle_launcher() {
+  local link="$1" script="$2" content marker='# agent-skills sync Oracle launcher'
+  if present "$link"; then
+    if [ -L "$link" ] || [ ! -f "$link" ] || ! grep -Fxq "$marker" "$link"; then
+      report failed "left $link untouched because it is not a launcher sync owns"
+      return 1
+    fi
+  fi
+  content="$(printf '#!/bin/bash\n%s\nexec %q %q "$@"\n' "$marker" "$fallback_node" "$script")"
+  if [ -x "$link" ] && [ "$(cat "$link")" = "$content" ]; then return; fi
+  change "write Oracle launcher $link" write_oracle_launcher "$link" "$content"
+}
+
 step_oracle() {
   local executable prefix expected
   if [ ! -d "$HOME/.oracle/browser-profile" ]; then
@@ -387,17 +408,29 @@ step_oracle() {
   fi
   if [ "$node_ready" -ne 1 ]; then report skipped 'Oracle needs Node 24+'; return; fi
   executable="$(command -v oracle)" || executable=''
-  if [ -n "$executable" ] && oracle_version "$executable"; then detail="Oracle $ORACLE_VERSION at $executable"; return; fi
-  change "install @steipete/oracle@$ORACLE_VERSION globally" npm install -g "@steipete/oracle@$ORACLE_VERSION" || return 1
+  if [ -n "$executable" ] && oracle_version "$executable"; then
+    if [ -z "$fallback_node" ]; then detail="Oracle $ORACLE_VERSION at $executable"; return; fi
+  else
+    change "install @steipete/oracle@$ORACLE_VERSION globally" npm install -g "@steipete/oracle@$ORACLE_VERSION" || return 1
+    if [ "$mode" = check ] && [ -z "$fallback_node" ]; then return; fi
+  fi
+  prefix="$(npm prefix -g)" || { report failed 'cannot resolve npm global prefix'; return 1; }
+  if [ -n "$fallback_node" ]; then
+    sync_oracle_launcher "$HOME/.local/bin/oracle" "$prefix/lib/node_modules/@steipete/oracle/dist/bin/oracle-cli.js"
+    sync_oracle_launcher "$HOME/.local/bin/oracle-mcp" "$prefix/lib/node_modules/@steipete/oracle/dist/bin/oracle-mcp.js"
+    case ":$original_path:" in
+      *":$HOME/.local/bin:"* | *":$HOME/.local/bin/:"*) ;;
+      *) report failed "$HOME/.local/bin is not on the original PATH; add export PATH=\"\$HOME/.local/bin:\$PATH\" to your shell configuration" ;;
+    esac
+  fi
   [ "$mode" = check ] && return 0
   hash -r
-  executable="$(command -v oracle)" || executable=''
-  prefix="$(npm prefix -g)" || { report failed 'cannot resolve npm global prefix'; return 1; }
+  executable="$(PATH="$original_path" command -v oracle)" || executable=''
   expected="$prefix/bin/oracle"
-  if [ -n "$executable" ] && oracle_version "$executable"; then return; fi
+  if [ -n "$executable" ] && PATH="$original_path" oracle_version "$executable"; then return; fi
   if [ -n "$executable" ] && [ "$executable" != "$expected" ]; then
     report failed "Oracle at $executable shadows npm global bin $expected and fails the pinned version check; left untouched"
-  else report failed "Oracle at ${executable:-$expected} failed the pinned version check after installation"
+  else report failed "Oracle at ${executable:-$expected} failed the pinned version check on the original PATH after installation"
   fi
 }
 

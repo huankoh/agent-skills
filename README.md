@@ -20,6 +20,11 @@ A differing model sheet is the exception and gets a timestamped backup before th
 
 Install Git, GitHub CLI, and Node 24 or later, and authenticate `gh` with access to the private presentation repo.
 If PATH has an older Node, `sync` selects the newest Node 24 or later under `~/.nvm/versions/node` for its own run.
+After selecting an nvm Node, `sync` writes owned launchers at `~/.local/bin/oracle` and `~/.local/bin/oracle-mcp`.
+Each launcher runs that Node binary on the installed npm entry point, so your normal shell can use Oracle.
+Add `export PATH="$HOME/.local/bin:$PATH"` to your shell configuration if that folder is missing from PATH.
+`sync` verifies Oracle using its original PATH and reports a failure if that check fails.
+When Node on PATH is already 24 or later, `sync` creates no launchers.
 If no suitable Node exists, the remaining steps run and pstack and Oracle report that they were skipped.
 
 ```sh
@@ -110,6 +115,8 @@ oracle --engine browser --browser-manual-login --browser-keep-browser -p "HI"
 ```
 
 `sync` prints this reminder when `~/.oracle/browser-profile` is missing and never starts an Oracle run itself.
+An existing launcher is replaced only when it is a regular file with the marker `# agent-skills sync Oracle launcher`.
+During nvm fallback, other files and links at those launcher paths stay untouched and make the Oracle step fail.
 If an old Oracle shim shadows npm's global binary and fails the version check, `sync` reports the shim's path for you to fix.
 
 Oracle's browser engine uses your ChatGPT plan.
