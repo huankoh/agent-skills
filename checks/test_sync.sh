@@ -88,6 +88,11 @@ case "$tool" in
       *) exit 1 ;;
     esac
     ;;
+  mv)
+    for backup in "$@"; do :; done
+    printf 'backup that appeared during the move\n' >"$backup"
+    exec /bin/mv "$@"
+    ;;
   muse | gemini) ;;
   *) exit 1 ;;
 esac
@@ -219,6 +224,19 @@ expect 'backup keeps the exact old bytes' grep -qx 'old model bytes' "${backups[
 expect 'backup path has a UTC timestamp' bash -c '[[ "$1" =~ models.md.bak-[0-9]{8}T[0-9]{6}Z$ ]]' _ "${backups[0]}"
 expect 'backup reports a diff command' grep -q 'diff -u' "$output"
 expect 'differing model sheet becomes a link' link_is "$H/.config/t3-pstack-science/models.md" "$clone/config/models.md"
+
+fresh_home
+mkdir -p "$H/.config/t3-pstack-science"
+echo 'original sheet before the race' >"$H/.config/t3-pstack-science/models.md"
+cp "$suite/fake" "$case_dir/bin/mv"
+run
+backups=("$H/.config/t3-pstack-science/"models.md.bak-*)
+expect 'a backup created during the move makes sync fail' [ "$status" = 1 ]
+expect 'a raced backup is never overwritten' grep -qx 'backup that appeared during the move' "${backups[0]}"
+expect 'a failed no-clobber move preserves the original sheet' grep -qx 'original sheet before the race' "$H/.config/t3-pstack-science/models.md"
+expect 'a failed backup never replaces the sheet with a link' test ! -L "$H/.config/t3-pstack-science/models.md"
+expect 'a backup race is reported in the model sheet step' grep -q '^model sheet - failed' "$output"
+expect 'a backup race still allows later steps to run' grep -q '^npm install ' "$log"
 
 fresh_home
 mkdir -p "$H/.config/t3-pstack-science"
