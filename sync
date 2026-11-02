@@ -227,33 +227,36 @@ step_skills() {
   fi
 }
 
-replace_sheet() {
+replace_config() {
   local target="$1" link="$2" backup="$3"
   mkdir -p "$(dirname "$link")" || return 1
   if [ -n "$backup" ]; then
     if present "$backup"; then report failed "backup path $backup appeared before the move"; return 1; fi
     mv -n "$link" "$backup" || return 1
     # BSD mv reports success when -n leaves an existing destination untouched.
-    if present "$link"; then report failed "backup path $backup appeared during the move; sheet left untouched"; return 1; fi
+    if present "$link"; then report failed "backup path $backup appeared during the move; config left untouched"; return 1; fi
   elif present "$link"; then rm "$link" || return 1
   fi
   ln -s "$target" "$link"
 }
 
-step_model_sheet() {
-  local target="$repo/config/models.md" link="${XDG_CONFIG_HOME:-$HOME/.config}/t3-pstack-science/models.md"
-  local backup='' source validator suffix=0
+sync_config() {
+  local target="$1" link="$2" backup='' suffix=0
   if [ -L "$link" ] && [ "$(readlink "$link")" = "$target" ]; then :
   elif [ -f "$link" ] && [ ! -L "$link" ] && cmp -s "$target" "$link"; then
-    change "replace identical $link with a link" replace_sheet "$target" "$link" '' || return 1
+    change "replace identical $link with a link" replace_config "$target" "$link" '' || return 1
   else
     if present "$link"; then
       backup="$link.bak-$(date -u +%Y%m%dT%H%M%SZ)"
       while present "$backup"; do suffix=$((suffix + 1)); backup="$link.bak-$(date -u +%Y%m%dT%H%M%SZ)-$suffix"; done
     fi
-    change "link $link${backup:+ after backing up to $backup}" replace_sheet "$target" "$link" "$backup" || return 1
+    change "link $link${backup:+ after backing up to $backup}" replace_config "$target" "$link" "$backup" || return 1
     if [ -n "$backup" ]; then printf '  compare with: diff -u %q %q\n' "$backup" "$target"; fi
   fi
+}
+
+validate_model_sheet() {
+  local target="$1" source validator
   source="$(pstack_skills)" || return 0
   validator="$source/setup-pstack/scripts/t3-sheet.mjs"
   [ -f "$validator" ] || return 0
@@ -272,6 +275,25 @@ JS
   then echo '  model sheet validation passed (offline; live provider availability is not checked)'
   else report failed 'model sheet validation failed'
   fi
+}
+
+validate_oracle_config() {
+  if [ "$node_ready" -ne 1 ]; then echo '  note: Oracle config validation needs Node 24+'; return; fi
+  if node -e 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"))' "$1"; then
+    echo '  Oracle config validation passed'
+  else report failed 'Oracle config validation failed'
+  fi
+}
+
+step_configs() {
+  local target link validator
+  while IFS='|' read -r target link validator; do
+    sync_config "$target" "$link" || continue
+    "$validator" "$target"
+  done <<EOF
+$repo/config/models.md|${XDG_CONFIG_HOME:-$HOME/.config}/t3-pstack-science/models.md|validate_model_sheet
+$repo/config/oracle.json|$HOME/.oracle/config.json|validate_oracle_config
+EOF
 }
 
 pstack_report() {
@@ -447,7 +469,7 @@ run_step node step_node
 run_step repo step_repo
 run_step ppt-master step_ppt_master
 run_step skills step_skills
-run_step 'model sheet' step_model_sheet
+run_step configs step_configs
 run_step pstack step_pstack
 run_step 'ported skills' step_ported_skills
 run_step oracle step_oracle

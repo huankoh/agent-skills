@@ -14,7 +14,7 @@ export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME" GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EM
 git clone -q "$repo" "$suite/source"
 git -C "$suite/source" checkout -q -B main
 cp "$repo/sync" "$repo/sync.conf" "$repo/install.sh" "$suite/source/"
-cp "$repo/config/models.md" "$suite/source/config/models.md"
+cp "$repo/config/models.md" "$repo/config/oracle.json" "$suite/source/config/"
 cp "$repo/scripts/vendor-oracle-skill.sh" "$suite/source/scripts/vendor-oracle-skill.sh"
 cp "$repo/skills/oracle/SKILL.md" "$repo/skills/oracle/LICENSE" "$suite/source/skills/oracle/"
 git -C "$suite/source" add .
@@ -212,6 +212,8 @@ expect 'Claude Code sees Oracle' link_is "$H/.claude/skills/oracle" "$H/.agents/
 expect 'Antigravity sees the hub' link_is "$H/.gemini/config/skills" "$H/.agents/skills"
 expect 'user skills stay untouched' grep -qx keep "$H/.agents/skills/mine/SKILL.md"
 expect 'model sheet links back into the clone' link_is "$H/.config/t3-pstack-science/models.md" "$clone/config/models.md"
+expect 'Oracle config links back into the clone' link_is "$H/.oracle/config.json" "$clone/config/oracle.json"
+expect 'Oracle config is validated' grep -q 'Oracle config validation passed' "$output"
 source="$H/.cursor/plugins/local/t3-pstack-science/skills"
 for target in "$H/.pi/agent/skills" "$H/.config/opencode/skills" "$H/.gemini/skills" \
   "$H/.gemini/antigravity-cli/skills" "$H/.t3/userdata/providers/antigravity/real/antigravity-cli/skills"; do
@@ -246,10 +248,19 @@ expect 'fresh check exits 1' [ "$status" = 1 ]
 expect 'fresh check changes no home contents' [ "$(snapshot)" = "$before" ]
 expect 'fresh check runs no installer' no_installers
 expect 'fresh check reports the missing clone' grep -q 'would change - clone' "$output"
+expect 'fresh check reports the model sheet link' grep -Fq "link $H/.config/t3-pstack-science/models.md" "$output"
+expect 'fresh check reports the Oracle config link' grep -Fq "link $H/.oracle/config.json" "$output"
 
 fresh_home
 mkdir -p "$H/.config/t3-pstack-science"
 echo 'old model bytes' >"$H/.config/t3-pstack-science/models.md"
+mkdir -p "$H/.oracle"
+printf '{"model":"old-model"}\n' >"$H/.oracle/config.json"
+before="$(snapshot)"
+run --check
+expect 'differing configs check preserves all home contents' [ "$(snapshot)" = "$before" ]
+expect 'differing configs check reports the model sheet' grep -Fq "link $H/.config/t3-pstack-science/models.md after backing up" "$output"
+expect 'differing configs check reports the Oracle config' grep -Fq "link $H/.oracle/config.json after backing up" "$output"
 run
 backups=("$H/.config/t3-pstack-science/"models.md.bak-*)
 expect 'differing model sheet has one timestamped backup' [ "${#backups[@]}" = 1 ]
@@ -257,6 +268,12 @@ expect 'backup keeps the exact old bytes' grep -qx 'old model bytes' "${backups[
 expect 'backup path has a UTC timestamp' bash -c '[[ "$1" =~ models.md.bak-[0-9]{8}T[0-9]{6}Z$ ]]' _ "${backups[0]}"
 expect 'backup reports a diff command' grep -q 'diff -u' "$output"
 expect 'differing model sheet becomes a link' link_is "$H/.config/t3-pstack-science/models.md" "$clone/config/models.md"
+backups=("$H/.oracle/"config.json.bak-*)
+expect 'differing Oracle config has one timestamped backup' [ "${#backups[@]}" = 1 ]
+expect 'Oracle backup keeps the exact old bytes' cmp -s "${backups[0]}" <(printf '{"model":"old-model"}\n')
+expect 'Oracle backup path has a UTC timestamp' bash -c '[[ "$1" =~ config.json.bak-[0-9]{8}T[0-9]{6}Z$ ]]' _ "${backups[0]}"
+expect 'Oracle backup reports a diff command' grep -Fq "diff -u ${backups[0]}" "$output"
+expect 'differing Oracle config becomes a link' link_is "$H/.oracle/config.json" "$clone/config/oracle.json"
 
 fresh_home
 mkdir -p "$H/.config/t3-pstack-science"
@@ -268,15 +285,19 @@ expect 'a backup created during the move makes sync fail' [ "$status" = 1 ]
 expect 'a raced backup is never overwritten' grep -qx 'backup that appeared during the move' "${backups[0]}"
 expect 'a failed no-clobber move preserves the original sheet' grep -qx 'original sheet before the race' "$H/.config/t3-pstack-science/models.md"
 expect 'a failed backup never replaces the sheet with a link' test ! -L "$H/.config/t3-pstack-science/models.md"
-expect 'a backup race is reported in the model sheet step' grep -q '^model sheet - failed' "$output"
+expect 'a backup race is reported in the configs step' grep -q '^configs - failed' "$output"
 expect 'a backup race still allows later steps to run' grep -q '^npm install ' "$log"
 
 fresh_home
 mkdir -p "$H/.config/t3-pstack-science"
 cp "$clone/config/models.md" "$H/.config/t3-pstack-science/models.md"
+mkdir -p "$H/.oracle"
+cp "$clone/config/oracle.json" "$H/.oracle/config.json"
 run
 expect 'identical model sheet becomes a link' link_is "$H/.config/t3-pstack-science/models.md" "$clone/config/models.md"
 expect 'identical model sheet needs no backup' no_backups "$H/.config/t3-pstack-science/models.md"
+expect 'identical Oracle config becomes a link' link_is "$H/.oracle/config.json" "$clone/config/oracle.json"
+expect 'identical Oracle config needs no backup' no_backups "$H/.oracle/config.json"
 expect 'identical model sheet reports no backup' bash -c '! grep -q "backing up" "$1"' _ "$output"
 
 fresh_home
@@ -579,6 +600,7 @@ fresh_home
 extra=("XDG_CONFIG_HOME=$H/settings")
 run
 expect 'model sheet respects XDG_CONFIG_HOME' link_is "$H/settings/t3-pstack-science/models.md" "$clone/config/models.md"
+expect 'Oracle config remains under HOME with XDG_CONFIG_HOME' link_is "$H/.oracle/config.json" "$clone/config/oracle.json"
 
 fresh_home
 git -C "$clone" checkout -q -b work
@@ -617,8 +639,15 @@ run
 expect 'model sheet uses the installed offline validator' grep -q 'model sheet validation passed' "$output"
 echo INVALID >>"$clone/config/models.md"
 run
-expect 'invalid model sheet fails its step' grep -q '^model sheet - failed' "$output"
+expect 'invalid model sheet fails its step' grep -q '^configs - failed' "$output"
 expect 'invalid model sheet makes sync exit 1' [ "$status" = 1 ]
+expect 'Oracle config validates after a model sheet failure' grep -q 'Oracle config validation passed' "$output"
+
+fresh_home
+echo INVALID >"$clone/config/oracle.json"
+run
+expect 'invalid Oracle config fails the configs step' grep -q '^configs - failed.*Oracle config validation failed' "$output"
+expect 'invalid Oracle config makes sync exit 1' [ "$status" = 1 ]
 
 fresh_home
 env HOME="$H" PATH="$case_dir/bin:/usr/bin:/bin" TEST_LOG="$log" \

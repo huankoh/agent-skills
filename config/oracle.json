@@ -1,0 +1,8 @@
+{
+  "engine": "browser",
+  "model": "gpt-6-pro",
+  "browser": {
+    "manualLogin": true,
+    "keepBrowser": true
+  }
+}
