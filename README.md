@@ -103,6 +103,9 @@ cd ~/code/agent-skills
 
 Pass a tag, branch, or commit as the optional argument to select another upstream ref.
 The script resolves the ref to a full commit through `gh api`, downloads the skill and license verbatim, and updates `ORACLE_SKILL_COMMIT` in `sync.conf`.
+The vendored skill carries one local adaptation on top of upstream's text.
+It makes GPT-6 Pro browser runs the default, detaches them with `--no-wait`, and keeps Chrome hidden and unfocused.
+The script overwrites that adaptation, so carry it forward when you review the diff.
 Review the diff in a PR, then run `sync` on each machine after it lands.
 The skill commit and the npm CLI version are separate pins.
 
