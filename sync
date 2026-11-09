@@ -133,6 +133,10 @@ sync_git() {
     report skipped "$directory is on $branch; pull skipped"
     return
   fi
+  if [ -n "$(git -C "$directory" status --porcelain)" ]; then
+    report skipped "$directory has a dirty tree; pull skipped"
+    return
+  fi
   if [ "$mode" = check ]; then
     if ! git -C "$directory" fetch; then report failed "fetch $directory"; return 1; fi
     upstream="$(git -C "$directory" rev-parse --abbrev-ref '@{upstream}' 2>/dev/null)" || {
@@ -142,10 +146,6 @@ sync_git() {
     if [ "$behind" -gt 0 ]; then report 'would change' "$directory is $behind commits behind $upstream"
     else printf '  %s is 0 commits behind %s\n' "$directory" "$upstream"
     fi
-    return
-  fi
-  if [ -n "$(git -C "$directory" status --porcelain)" ]; then
-    report skipped "$directory has a dirty tree; pull skipped"
     return
   fi
   before="$(git -C "$directory" rev-parse HEAD)" || return 1
