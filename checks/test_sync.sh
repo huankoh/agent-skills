@@ -610,6 +610,8 @@ fresh_home
 echo dirty >>"$clone/README.md"
 run
 expect 'sync repo dirty tree is reported' grep -q '^repo - skipped - .* has a dirty tree; pull skipped' "$output"
+run --check
+expect 'check repo dirty tree is reported' grep -q '^repo - skipped - .* has a dirty tree; pull skipped' "$output"
 
 fresh_home
 printf '\n# updated fixture\n' >>"$suite/source/sync"

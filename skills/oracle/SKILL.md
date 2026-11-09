@@ -10,29 +10,35 @@ model can answer with real repository context through the API or browser. A
 prompt is required; attach files only when they add necessary context. Treat
 responses as advisory and verify them against the codebase and tests.
 
-## Main use case (browser, GPT-5.6)
+## Default: GPT-6 Pro in the background
 
-Use browser mode with GPT-5.6 when the ChatGPT account exposes it. GPT-5.6 Sol
-and GPT-5.6 Sol Pro are distinct targets: base Sol uses the Extra High effort
-setting, while Pro is a separate picker target for difficult or long-running
-work.
+Use the installed `oracle` CLI with browser mode and `gpt-6-pro` by default, unless the user requests another model or engine.
+Run local browser sessions with `--no-wait` so the command returns after starting the detached session.
+Keep Chrome hidden and avoid taking focus with `--browser-hide-window` and `--browser-no-focus`.
 
-Recommended defaults:
+```bash
+oracle --engine browser --model gpt-6-pro --no-wait \
+  --browser-manual-login --browser-hide-window --browser-no-focus \
+  --slug "<3-5 words>" -p "<task>" --file "src/**"
+```
 
-- Engine: browser (`--engine browser`)
-- Base Sol: `--model gpt-5.6-sol`
-- Base Sol maximum reasoning: `--browser-thinking-time extra-high` (Extra High)
-- Explicit Pro effort on GPT-5.6 Sol: `--browser-thinking-time pro` (fails closed if Pro cannot be confirmed)
-- Browser GPT-5.5 with Pro effort: `--model gpt-5.5 --browser-thinking-time pro`
-- API Pro maximum reasoning: `--model gpt-5.6-sol --reasoning-mode pro --reasoning-effort max`
-- Fallback: explicitly use `--model gpt-5.5-pro` when GPT-5.6 is unavailable
-- Attachments: directories/globs plus excludes; never attach secrets by default
+Save the session ID and report that the run is in progress.
+Use `oracle status --hours 72` to check it and `oracle session <id> --render` to read the result when needed.
+Do not start a duplicate if a run is still active or has timed out.
+A remote browser host requires `--wait`; do not claim that such a run detached.
+The browser picker must confirm GPT-6 and Pro; do not silently substitute another model if either is unavailable.
+Picker evidence does not independently establish the server-side model generation.
 
-GPT-5.6 availability is account-dependent. Confirm the base Sol picker and
-retain model-selection evidence. A bare `Pro` picker label proves picker
-selection but does not, by itself, prove the server-side Pro generation.
+For an explicitly authorized API run, use `--engine api --model gpt-6-astra --reasoning-mode pro --reasoning-effort max`.
+The browser-only `gpt-6-pro` alias is not an API model ID.
+API calls can incur usage costs and require explicit user consent.
 
-## GPT-5.6 model selection
+The installed CLI config already selects browser mode, `gpt-6-pro`, a hidden window, and no focus.
+Keep the explicit flags in skill commands so the intended behavior survives different local configurations.
+Use `--no-wait`, not `--background`, to detach the CLI session.
+The `--background` flag controls Responses API background mode and does not detach browser runs.
+
+## Optional GPT-5.6 model selection
 
 This version supports GPT-5.6 on both surfaces, but Pro selection differs:
 
@@ -92,9 +98,8 @@ and a live browser run records strict GPT-5.6 selection evidence.
 
 1. Pick the smallest file set that still contains the truth.
 2. Preview the bundle with `--dry-run` and `--files-report`.
-3. Use browser mode for GPT-5.6; use API only when explicitly intended.
-4. If a run detaches or times out, reattach to the stored session instead of
-   starting a duplicate.
+3. Start a GPT-6 Pro browser session with `--no-wait` unless the user specifies otherwise.
+4. Save the session ID and reattach when its result is needed instead of starting a duplicate.
 
 ## Commands
 
@@ -108,8 +113,8 @@ and a live browser run records strict GPT-5.6 selection evidence.
 - Inspect token usage:
   - `npx -y @steipete/oracle --dry-run summary --files-report -p "<task>" --file "src/**"`
 
-- Browser run:
-  - `oracle --engine browser --browser-manual-login --model gpt-5.6-sol --browser-thinking-time extra-high -p "<task>" --file "src/**"`
+- Background browser run:
+  - `oracle --engine browser --model gpt-6-pro --no-wait --browser-manual-login --browser-hide-window --browser-no-focus -p "<task>" --file "src/**"`
 
 - Manual paste fallback:
   - `npx -y @steipete/oracle --render-markdown --copy-markdown -p "<task>" --file "src/**"`
